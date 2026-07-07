@@ -17,6 +17,7 @@ pub trait Hasher: Send {
     fn finalize(self: Box<Self>) -> Vec<u8>;
 
     /// Get the output size in bytes
+    #[allow(dead_code)]
     fn output_size(&self) -> usize;
 }
 
@@ -439,6 +440,7 @@ impl HashRegistry {
     }
 
     /// Check if an algorithm is post-quantum resistant
+    #[allow(dead_code)]
     pub fn is_post_quantum(algorithm: &str) -> bool {
         let alg_lower = algorithm.to_lowercase();
 
@@ -480,11 +482,13 @@ impl HashComputer {
     }
 
     /// Create a new HashComputer with custom buffer size
+    #[allow(dead_code)]
     pub fn with_buffer_size(buffer_size: usize) -> Self {
         Self { buffer_size }
     }
 
     /// Compute hash from text string
+    #[allow(dead_code)]
     pub fn compute_hash_text(&self, text: &str, algorithm: &str) -> Result<HashResult, HashError> {
         // Get hasher for the specified algorithm
         let mut hasher = HashRegistry::get_hasher(algorithm)?;
@@ -539,6 +543,7 @@ impl HashComputer {
     }
 
     /// Compute hash from stdin using streaming I/O
+    #[allow(dead_code)]
     pub fn compute_hash_stdin(&self, algorithm: &str) -> Result<HashResult, HashError> {
         use std::io::{stdin, Read};
 
@@ -789,6 +794,7 @@ impl HashComputer {
     ///
     /// Memory mapping assumes the file will not be modified by other processes during hashing.
     /// If the file is modified concurrently, the hash results may be inconsistent.
+    #[allow(dead_code)]
     pub fn compute_multiple_hashes(
         &self,
         path: &Path,

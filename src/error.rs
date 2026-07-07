@@ -8,6 +8,7 @@ use std::path::PathBuf;
 /// Main error type for the hash utility
 /// Provides context-rich error messages with file paths and operations
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum HashUtilityError {
     /// File system errors with context
     FileNotFound {

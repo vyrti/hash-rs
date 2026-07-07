@@ -509,7 +509,7 @@ fn handle_verify_command(
     }
 
     // Aggregate results if multiple verifications were performed
-    let (database, directory, report) = if all_reports.len() == 1 {
+    let (_database, _directory, report) = if all_reports.len() == 1 {
         // Single verification - use the report as-is
         let (db, dir, rep) = all_reports.into_iter().next().unwrap();
         (db, dir, rep)

@@ -265,6 +265,7 @@ pub fn parse_args() -> Result<Cli, HashUtilityError> {
 }
 
 // Re-export HashUtilityError as CliError for backward compatibility
+#[allow(dead_code)]
 pub type CliError = HashUtilityError;
 
 #[cfg(test)]

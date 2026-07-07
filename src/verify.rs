@@ -2,7 +2,6 @@
 // Compares current hashes against stored database
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -427,6 +426,7 @@ impl VerifyEngine {
     }
 
     /// Legacy method for backward compatibility
+    #[allow(dead_code)]
     fn collect_files(&self, directory: &Path) -> Result<HashSet<PathBuf>, VerifyError> {
         self.collect_files_optimized(directory)
     }
@@ -464,6 +464,7 @@ impl VerifyEngine {
     }
 
     /// Legacy method for backward compatibility
+    #[allow(dead_code)]
     fn resolve_database_paths(
         &self,
         database: &HashMap<PathBuf, DatabaseEntry>,

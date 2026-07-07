@@ -1,6 +1,6 @@
 [package]
 name = "quichash"
-version = "0.0.20"
+version = "0.0.21"
 edition = "2021"
 description = "High-performance cryptographic hash utility with SIMD optimization"
 license = "MIT OR Apache-2.0"
@@ -17,13 +17,13 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6", features = ["derive", "std", "help", "usage", "error-context"], default-features = false }
-md-5 = "0.10"
-sha1 = "0.10"
+md-5 = "0.11"
+sha1 = "0.11"
 sha2 = "0.11"
-sha3 = "0.10"
+sha3 = "0.12"
 blake2 = "0.10"
 blake3 = { version = "1.8", features = ["rayon"] }
-rayon = "1.11"
+rayon = "1.12"
 indicatif = "0.18"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 ignore = "0.4"

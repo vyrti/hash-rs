@@ -75,6 +75,7 @@ fn format_size(bytes: u64) -> String {
 
 impl CompareReport {
     /// Display the comparison report in plain text format
+    #[allow(dead_code)]
     pub fn display(&self) {
         println!("\n=== Database Comparison Report ===\n");
 

@@ -146,6 +146,7 @@ fn calculate_throughput(data_size_mb: usize, duration: Duration) -> f64 {
 }
 
 // Re-export HashUtilityError as BenchmarkError for backward compatibility
+#[allow(dead_code)]
 pub type BenchmarkError = HashUtilityError;
 
 #[cfg(test)]

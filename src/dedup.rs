@@ -55,6 +55,7 @@ pub struct DuplicateGroupWithSize {
 
 impl DedupReport {
     /// Display the dedup report in plain text format
+    #[allow(dead_code)]
     pub fn display(&self) {
         println!("\n=== Duplicate Files Report ===\n");
 
@@ -248,7 +249,7 @@ impl DedupEngine {
     fn scan_sequential(
         &self,
         canonical_root: &Path,
-        start_time: Instant,
+        _start_time: Instant,
     ) -> Result<(HashMap<String, Vec<(PathBuf, u64)>>, usize, usize, u64), HashUtilityError> {
         // Collect all files
         let files = self.collect_files(canonical_root)?;
@@ -330,7 +331,7 @@ impl DedupEngine {
     fn scan_parallel(
         &self,
         canonical_root: &Path,
-        start_time: Instant,
+        _start_time: Instant,
     ) -> Result<(HashMap<String, Vec<(PathBuf, u64)>>, usize, usize, u64), HashUtilityError> {
         // Thread-safe counters
         let files_scanned = Arc::new(Mutex::new(0usize));

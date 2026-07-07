@@ -82,6 +82,7 @@ impl ScanEngine {
     }
 
     /// Enable or disable .hashignore file support
+    #[allow(dead_code)]
     pub fn with_ignore(mut self, use_ignore: bool) -> Self {
         self.use_ignore = use_ignore;
         self
@@ -700,6 +701,7 @@ impl ScanEngine {
     ///
     /// # Returns
     /// Vector of all file paths found
+    #[allow(dead_code)]
     fn collect_files(&self, root: &Path) -> Result<Vec<PathBuf>, ScanError> {
         self.collect_files_with_exclusion(root, None)
     }
