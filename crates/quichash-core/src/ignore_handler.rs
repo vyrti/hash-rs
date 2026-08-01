@@ -1,4 +1,4 @@
-// .hashignore file handling module
+//! `.hashignore` handling.
 // Supports gitignore-style patterns for excluding files from scans
 
 use crate::error::HashUtilityError;

@@ -1,4 +1,4 @@
-// Path normalization utilities for cross-platform path handling
+//! Cross-platform path utilities.
 // Handles both forward and backward slashes in database parsing
 // Provides utilities for canonicalization and relative path handling
 

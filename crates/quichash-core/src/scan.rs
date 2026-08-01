@@ -1,13 +1,13 @@
-// Directory scanning module
+//! Recursive directory scanning.
 // Handles recursive directory traversal and hash computation
 
 use crate::database::DatabaseHandler;
 use crate::error::HashUtilityError;
 use crate::hash::HashComputer;
 use crate::ignore_handler::IgnoreHandler;
+use crate::operation::{LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle};
 use crate::path_utils;
 use crossbeam_channel::{bounded, Sender};
-use indicatif::{ProgressBar, ProgressStyle};
 use jwalk::WalkDir;
 use rayon::prelude::*;
 use std::fs::{self, File};
@@ -17,16 +17,20 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-// Re-export HashUtilityError as ScanError for backward compatibility
+/// Backward-compatible error name for directory scan operations.
 pub type ScanError = HashUtilityError;
 
 /// Statistics collected during a directory scan
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ScanStats {
+    /// Number of files hashed successfully.
     pub files_processed: usize,
+    /// Number of files that could not be processed.
     pub files_failed: usize,
+    /// Sum of sizes of successfully processed files.
     pub total_bytes: u64,
     #[serde(serialize_with = "serialize_duration")]
+    /// Elapsed scan time, serialized as seconds.
     pub duration: Duration,
 }
 
@@ -47,7 +51,6 @@ pub struct ScanEngine {
     fast_mode: bool,
     use_ignore: bool,
     format: DatabaseFormat,
-    quiet: bool,
 }
 
 impl ScanEngine {
@@ -59,7 +62,6 @@ impl ScanEngine {
             fast_mode: false,
             use_ignore: true,
             format: DatabaseFormat::Standard,
-            quiet: false,
         }
     }
 
@@ -71,7 +73,6 @@ impl ScanEngine {
             fast_mode: false,
             use_ignore: true,
             format: DatabaseFormat::Standard,
-            quiet: false,
         }
     }
 
@@ -82,7 +83,6 @@ impl ScanEngine {
     }
 
     /// Enable or disable .hashignore file support
-    #[allow(dead_code)]
     pub fn with_ignore(mut self, use_ignore: bool) -> Self {
         self.use_ignore = use_ignore;
         self
@@ -91,12 +91,6 @@ impl ScanEngine {
     /// Set the output format
     pub fn with_format(mut self, format: DatabaseFormat) -> Self {
         self.format = format;
-        self
-    }
-
-    /// Enable or disable stdout status output
-    pub fn with_quiet(mut self, quiet: bool) -> Self {
-        self.quiet = quiet;
         self
     }
 
@@ -133,9 +127,7 @@ impl ScanEngine {
         };
 
         // Collect all files in the directory tree (only for sequential mode)
-        if !self.quiet {
-            println!("Scanning directory: {}", root.display());
-        }
+        println!("Scanning directory: {}", root.display());
         let files = if !self.parallel {
             self.collect_files_with_exclusion(root, Some(&output_absolute))?
         } else {
@@ -143,11 +135,11 @@ impl ScanEngine {
             Vec::new()
         };
 
-        if !self.parallel && !self.quiet {
+        if !self.parallel {
             println!("Found {} files to process", files.len());
         }
 
-        if self.fast_mode && !self.quiet {
+        if self.fast_mode {
             println!("Fast mode enabled: sampling first, middle, and last 100MB of large files");
         }
 
@@ -200,18 +192,13 @@ impl ScanEngine {
         let mut total_bytes = 0u64;
 
         // Create progress bar
-        let pb = if self.quiet {
-            ProgressBar::hidden()
-        } else {
-            let pb = ProgressBar::new(files.len() as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            pb
-        };
+        let pb = ProgressBar::new(files.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
 
         // Process each file
         for file_path in files.iter() {
@@ -293,26 +280,24 @@ impl ScanEngine {
         // Clear progress bar and display summary
         pb.finish_and_clear();
 
-        if !self.quiet {
-            println!("\nScan complete!");
-            println!("Files processed: {}", files_processed);
-            println!("Files failed: {}", files_failed);
-            println!("Files skipped: {}", files_skipped);
-            println!(
-                "Total bytes: {} ({:.2} MB)",
-                total_bytes,
-                total_bytes as f64 / 1_048_576.0
-            );
-            println!("Duration: {:.2}s", duration.as_secs_f64());
+        println!("\nScan complete!");
+        println!("Files processed: {}", files_processed);
+        println!("Files failed: {}", files_failed);
+        println!("Files skipped: {}", files_skipped);
+        println!(
+            "Total bytes: {} ({:.2} MB)",
+            total_bytes,
+            total_bytes as f64 / 1_048_576.0
+        );
+        println!("Duration: {:.2}s", duration.as_secs_f64());
 
-            // Calculate and display throughput
-            if duration.as_secs_f64() > 0.0 {
-                let throughput_mbps = (total_bytes as f64 / 1_048_576.0) / duration.as_secs_f64();
-                println!("Throughput: {:.2} MB/s", throughput_mbps);
-            }
-
-            println!("Output written to: {}", output.display());
+        // Calculate and display throughput
+        if duration.as_secs_f64() > 0.0 {
+            let throughput_mbps = (total_bytes as f64 / 1_048_576.0) / duration.as_secs_f64();
+            println!("Throughput: {:.2} MB/s", throughput_mbps);
         }
+
+        println!("Output written to: {}", output.display());
 
         Ok(ScanStats {
             files_processed,
@@ -339,20 +324,14 @@ impl ScanEngine {
         let total_bytes = Arc::new(Mutex::new(0u64));
 
         // Create progress bar (we'll update the style once discovery is complete)
-        let pb = if self.quiet {
-            ProgressBar::hidden()
-        } else {
-            let pb = ProgressBar::new(0);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "[{elapsed_precise}] Counting... {pos} files found | Processing: {msg}",
-                    )
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            pb
-        };
+        let pb = ProgressBar::new(0);
+        // Start with "Counting..." style
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] Counting... {pos} files found | Processing: {msg}")
+                .unwrap()
+                .progress_chars("=>-"),
+        );
 
         // Create bounded channel with backpressure (buffer size: 10000 entries)
         // Larger buffer helps with very large directory scans
@@ -364,7 +343,6 @@ impl ScanEngine {
 
         // Capture fast_mode for use in closure
         let fast_mode = self.fast_mode;
-        let quiet = self.quiet;
 
         // Clone canonical_root and output_absolute for the walker thread
         let walker_root = canonical_root.to_path_buf();
@@ -387,16 +365,14 @@ impl ScanEngine {
             );
 
             // Mark discovery as complete and update progress bar with total and new style
-            if !quiet {
-                let total = *total_files_discovered_walker.lock().unwrap();
-                pb_walker.set_length(total as u64);
-                pb_walker.set_style(
-                    ProgressStyle::default_bar()
-                        .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
-                        .unwrap()
-                        .progress_chars("=>-"),
-                );
-            }
+            let total = *total_files_discovered_walker.lock().unwrap();
+            pb_walker.set_length(total as u64);
+            pb_walker.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
+                    .unwrap()
+                    .progress_chars("=>-")
+            );
             *discovery_complete_walker.lock().unwrap() = true;
 
             result
@@ -457,7 +433,8 @@ impl ScanEngine {
                             Err(_) => file_path.clone(),
                         };
 
-                        // Track file size
+                        // Preserve the size before replacing the absolute path
+                        // with its manifest-relative representation.
                         let file_size = fs::metadata(&file_path)
                             .map(|metadata| metadata.len())
                             .unwrap_or(0);
@@ -556,26 +533,24 @@ impl ScanEngine {
         let final_bytes = *total_bytes.lock().unwrap();
 
         // Display summary
-        if !self.quiet {
-            println!("\nScan complete!");
-            println!("Files processed: {}", final_processed);
-            println!("Files failed: {}", final_failed);
-            println!("Files skipped: {}", final_skipped);
-            println!(
-                "Total bytes: {} ({:.2} MB)",
-                final_bytes,
-                final_bytes as f64 / 1_048_576.0
-            );
-            println!("Duration: {:.2}s", duration.as_secs_f64());
+        println!("\nScan complete!");
+        println!("Files processed: {}", final_processed);
+        println!("Files failed: {}", final_failed);
+        println!("Files skipped: {}", final_skipped);
+        println!(
+            "Total bytes: {} ({:.2} MB)",
+            final_bytes,
+            final_bytes as f64 / 1_048_576.0
+        );
+        println!("Duration: {:.2}s", duration.as_secs_f64());
 
-            // Calculate and display throughput
-            if duration.as_secs_f64() > 0.0 {
-                let throughput_mbps = (final_bytes as f64 / 1_048_576.0) / duration.as_secs_f64();
-                println!("Throughput: {:.2} MB/s", throughput_mbps);
-            }
-
-            println!("Output written to: {}", output.display());
+        // Calculate and display throughput
+        if duration.as_secs_f64() > 0.0 {
+            let throughput_mbps = (final_bytes as f64 / 1_048_576.0) / duration.as_secs_f64();
+            println!("Throughput: {:.2} MB/s", throughput_mbps);
         }
+
+        println!("Output written to: {}", output.display());
 
         Ok(ScanStats {
             files_processed: final_processed,
@@ -610,34 +585,28 @@ impl ScanEngine {
         // Canonicalize exclude path once before the loop to avoid redundant calls
         let canonical_exclude = exclude_file.and_then(|p| p.canonicalize().ok());
 
-        // Use jwalk for parallel directory traversal
-        // Use RayonNewPool to parallelize directory walking in a separate thread pool
-        // This avoids conflicts with the main rayon pool used for hashing
-        // Configure to follow links and not skip hidden files
+        // Prune ignored directories before traversal so directory-only patterns
+        // also exclude every descendant in the parallel walker.
         let mut walker = WalkDir::new(root)
             .parallelism(jwalk::Parallelism::RayonNewPool(0)) // 0 = use default thread count
             .skip_hidden(false) // Don't skip hidden files
-            .follow_links(false); // Don't follow symlinks to avoid loops
-
+            .follow_links(false);
         if let Some(handler) = ignore_handler.clone() {
             let root = root.to_path_buf();
-            walker = walker.process_read_dir(move |_depth, _dir_path, _state, children| {
-                // Prune ignored directories before descending so patterns like `A/`
-                // exclude their contents, not just the directory entry itself.
+            walker = walker.process_read_dir(move |_depth, _dir, _state, children| {
                 for child_result in children.iter_mut() {
                     let Ok(child) = child_result else {
                         continue;
                     };
-
                     if !child.file_type.is_dir() {
                         continue;
                     }
-
                     let child_path = child.path();
-                    if let Ok(rel_path) = child_path.strip_prefix(&root) {
-                        if handler.should_ignore(rel_path, true) {
-                            child.read_children_path = None;
-                        }
+                    if child_path
+                        .strip_prefix(&root)
+                        .is_ok_and(|relative| handler.should_ignore(relative, true))
+                    {
+                        child.read_children_path = None;
                     }
                 }
             });
@@ -1137,39 +1106,28 @@ mod tests {
 
     #[test]
     fn test_walk_directory_streaming_skips_ignored_directory_patterns() {
-        let test_dir = "test_scan_ignore_directory_pattern";
-        fs::create_dir_all(format!("{}/A/sub", test_dir)).unwrap();
-        fs::create_dir_all(format!("{}/B", test_dir)).unwrap();
-
-        fs::write(format!("{}/.hashignore", test_dir), b"A/\n").unwrap();
-        fs::write(format!("{}/A/file1.txt", test_dir), b"one").unwrap();
-        fs::write(format!("{}/A/sub/file2.txt", test_dir), b"two").unwrap();
-        fs::write(format!("{}/B/file3.txt", test_dir), b"three").unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temporary.path().join("A/sub")).unwrap();
+        fs::create_dir_all(temporary.path().join("B")).unwrap();
+        fs::write(temporary.path().join(".hashignore"), b"A/\n").unwrap();
+        fs::write(temporary.path().join("A/file1.txt"), b"one").unwrap();
+        fs::write(temporary.path().join("A/sub/file2.txt"), b"two").unwrap();
+        fs::write(temporary.path().join("B/file3.txt"), b"three").unwrap();
 
         let (sender, receiver) = bounded::<PathBuf>(16);
-        let total_files_discovered = Arc::new(Mutex::new(0usize));
-
+        let discovered = Arc::new(Mutex::new(0));
         ScanEngine::walk_directory_streaming(
-            Path::new(test_dir),
+            temporary.path(),
             sender,
             true,
             None,
-            Arc::clone(&total_files_discovered),
+            Arc::clone(&discovered),
         )
         .unwrap();
-
-        let files: Vec<PathBuf> = receiver.iter().collect();
+        let files: Vec<_> = receiver.iter().collect();
 
         assert_eq!(files.len(), 1);
-        assert_eq!(*total_files_discovered.lock().unwrap(), 1);
-        assert!(files.iter().any(|path| path.ends_with(Path::new("B").join("file3.txt"))));
-        assert!(!files
-            .iter()
-            .any(|path| path.ends_with(Path::new("A").join("file1.txt"))));
-        assert!(!files.iter().any(|path| {
-            path.ends_with(Path::new("A").join("sub").join("file2.txt"))
-        }));
-
-        fs::remove_dir_all(test_dir).unwrap();
+        assert_eq!(*discovered.lock().unwrap(), 1);
+        assert!(files[0].ends_with(Path::new("B").join("file3.txt")));
     }
 }

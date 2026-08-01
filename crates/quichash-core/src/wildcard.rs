@@ -1,9 +1,8 @@
-// Wildcard pattern expansion module
+//! Wildcard expansion utilities.
 // Handles cross-platform wildcard pattern matching using glob
 
 use crate::error::HashUtilityError;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Expand a wildcard pattern into a list of matching file paths
 ///
@@ -28,7 +27,7 @@ pub fn expand_pattern(pattern: &str) -> Result<Vec<PathBuf>, HashUtilityError> {
         return Ok(vec![PathBuf::from(pattern)]);
     }
 
-    // If a literal path with wildcard characters exists, prefer the exact path.
+    // A real filename may legally contain glob metacharacters.
     if Path::new(pattern).exists() {
         return Ok(vec![PathBuf::from(pattern)]);
     }
@@ -174,12 +173,10 @@ mod tests {
 
     #[test]
     fn test_expand_pattern_prefers_literal_existing_path() {
-        let temp_dir = tempdir().unwrap();
-        let file = temp_dir.path().join("file[1].txt");
+        let temporary = tempdir().unwrap();
+        let file = temporary.path().join("file[1].txt");
         fs::write(&file, b"test").unwrap();
 
-        let result = expand_pattern(file.to_str().unwrap()).unwrap();
-
-        assert_eq!(result, vec![file]);
+        assert_eq!(expand_pattern(file.to_str().unwrap()).unwrap(), vec![file]);
     }
 }

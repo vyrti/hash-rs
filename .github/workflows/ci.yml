@@ -104,12 +104,20 @@ jobs:
       - name: Build project
         run: |
           if [ "${{ matrix.cross }}" == "true" ]; then
-            cross build --target ${{ matrix.target }}
+            cross build --workspace --all-features --target ${{ matrix.target }}
           else
-            cargo build --target ${{ matrix.target }}
+            cargo build --workspace --all-features --target ${{ matrix.target }}
           fi
         shell: bash
 
       - name: Run tests
         if: matrix.cross != true && matrix.target != 'aarch64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' && matrix.target != 'aarch64-pc-windows-msvc'
-        run: cargo test --target ${{ matrix.target }}
+        run: cargo test --workspace --all-features --target ${{ matrix.target }}
+
+      - name: Check minimal BLAKE3 core
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo check -p quichash-core --no-default-features --features blake3
+
+      - name: Check quichash-core documentation
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo doc -p quichash-core --all-features --no-deps

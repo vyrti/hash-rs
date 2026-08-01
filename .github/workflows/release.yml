@@ -130,9 +130,9 @@ jobs:
       - name: Build binary
         run: |
           if [ "${{ matrix.cross }}" == "true" ]; then
-            cross build --release --target ${{ matrix.target }}
+            cross build -p quichash --release --target ${{ matrix.target }}
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build -p quichash --release --target ${{ matrix.target }}
           fi
         shell: bash
 

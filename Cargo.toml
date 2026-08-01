@@ -1,44 +1,36 @@
-[package]
-name = "quichash"
+[workspace]
+members = ["crates/quichash-core", "crates/quichash-cli"]
+default-members = ["crates/quichash-core", "crates/quichash-cli"]
+resolver = "2"
+
+[workspace.package]
 version = "0.0.21"
 edition = "2021"
-description = "High-performance cryptographic hash utility with SIMD optimization"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vyrti/quichash"
 homepage = "https://github.com/vyrti/quichash"
-readme = "README.md"
-keywords = ["hash", "blake3", "sha256", "checksum", "crypto"]
-categories = ["command-line-utilities", "cryptography"]
-exclude = [".vscode/", ".github/", ".gitignore", "CLAUDE.md"]
 
-[[bin]]
-name = "hash"
-path = "src/main.rs"
-
-[dependencies]
+[workspace.dependencies]
+blake2 = "0.10"
+blake3 = { version = "1.8", default-features = false }
+chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "std", "help", "usage", "error-context"], default-features = false }
+crossbeam-channel = "0.5"
+glob = "0.3"
+ignore = "0.4"
+indicatif = "0.18"
+jwalk = "0.8"
 md-5 = "0.11"
+memmap2 = "0.9"
+rayon = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sha1 = "0.11"
 sha2 = "0.11"
 sha3 = "0.12"
-blake2 = "0.10"
-blake3 = { version = "1.8", features = ["rayon"] }
-rayon = "1.12"
-indicatif = "0.18"
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
-ignore = "0.4"
-crossbeam-channel = "0.5"
-jwalk = "0.8"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-chrono = "0.4"
-xz2 = "0.1"
-glob = "0.3"
-memmap2 = "0.9"
-
-[dev-dependencies]
-hex = "0.4"
 tempfile = "3.27"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+xz2 = "0.1"
 
 [profile.release]
 opt-level = 3

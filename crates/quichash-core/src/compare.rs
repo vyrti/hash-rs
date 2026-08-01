@@ -1,4 +1,4 @@
-// Compare engine module
+//! Manifest comparison.
 // Compares two hash databases and generates detailed comparison reports
 
 use crate::database::{DatabaseEntry, DatabaseFormat, DatabaseHandler};
@@ -9,50 +9,75 @@ use std::path::{Path, PathBuf};
 /// Metadata about a database file
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DatabaseInfo {
+    /// Database path.
     pub path: PathBuf,
+    /// Detected format name.
     pub format: String,
+    /// Database file size.
     pub size_bytes: u64,
+    /// Number of parsed file entries.
     pub file_count: usize,
+    /// Last-modified timestamp when available.
     pub modified: Option<String>,
 }
 
 /// Result of comparing a single file between two databases
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ChangedFile {
+    /// Path present in both databases.
     pub path: PathBuf,
+    /// Digest recorded in the first database.
     pub hash_db1: String,
+    /// Digest recorded in the second database.
     pub hash_db2: String,
 }
 
 /// A file that was moved/renamed between databases
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MovedFile {
+    /// Path in the first database.
     pub from_path: PathBuf,
+    /// Path in the second database.
     pub to_path: PathBuf,
+    /// Digest shared by both paths.
     pub hash: String,
 }
 
 /// Group of files with the same hash (duplicates)
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DuplicateGroup {
+    /// Digest shared by every path in the group.
     pub hash: String,
+    /// Paths with the shared digest.
     pub paths: Vec<PathBuf>,
+    /// Number of paths in the group.
     pub count: usize,
 }
 
 /// Comprehensive comparison report between two databases
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompareReport {
+    /// Metadata for the first database.
     pub db1_info: DatabaseInfo,
+    /// Metadata for the second database.
     pub db2_info: DatabaseInfo,
+    /// Total entries in the first database.
     pub db1_total_files: usize,
+    /// Total entries in the second database.
     pub db2_total_files: usize,
+    /// Paths with equal digest values in both databases.
     pub unchanged_files: usize,
+    /// Same paths whose digest values differ.
     pub changed_files: Vec<ChangedFile>,
+    /// Equal digests associated with different paths.
     pub moved_files: Vec<MovedFile>,
+    /// Paths found only in the first database.
     pub removed_files: Vec<PathBuf>,
+    /// Paths found only in the second database.
     pub added_files: Vec<PathBuf>,
+    /// Duplicate digest groups in the first database.
     pub duplicates_db1: Vec<DuplicateGroup>,
+    /// Duplicate digest groups in the second database.
     pub duplicates_db2: Vec<DuplicateGroup>,
 }
 
@@ -74,8 +99,11 @@ fn format_size(bytes: u64) -> String {
 }
 
 impl CompareReport {
-    /// Display the comparison report in plain text format
-    #[allow(dead_code)]
+    /// Legacy display hook retained for API compatibility.
+    ///
+    /// The reusable core does not write to the terminal. Use
+    /// [`Self::to_plain_text`] and render the returned string in the embedding
+    /// application.
     pub fn display(&self) {
         println!("\n=== Database Comparison Report ===\n");
 
@@ -326,6 +354,7 @@ impl CompareReport {
     }
 
     /// Format the comparison report as JSON string
+    #[cfg(feature = "reporting")]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         #[derive(serde::Serialize)]
         struct JsonOutput {
@@ -620,10 +649,13 @@ impl CompareEngine {
         };
 
         // Get modification time
+        #[cfg(feature = "reporting")]
         let modified = metadata.modified().ok().map(|time| {
             let datetime: chrono::DateTime<chrono::Utc> = time.into();
             datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
         });
+        #[cfg(not(feature = "reporting"))]
+        let modified = metadata.modified().ok().map(|time| format!("{time:?}"));
 
         Ok(DatabaseInfo {
             path: path.to_path_buf(),

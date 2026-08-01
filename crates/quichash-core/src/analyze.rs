@@ -1,4 +1,4 @@
-// Analyze engine module
+//! Manifest analysis.
 // Analyzes a single hash database and generates statistics
 
 use crate::database::{DatabaseFormat, DatabaseHandler};
@@ -9,8 +9,11 @@ use std::path::{Path, PathBuf};
 /// A group of duplicate files (same hash)
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DuplicateGroup {
+    /// Digest shared by every path in the group.
     pub hash: String,
+    /// Paths with the shared digest.
     pub paths: Vec<PathBuf>,
+    /// Number of paths in the group.
     pub count: usize,
     /// File size in bytes (only available for hashdeep format)
     pub file_size: Option<u64>,
@@ -21,23 +24,36 @@ pub struct DuplicateGroup {
 /// Database entry with optional size information
 #[derive(Debug, Clone)]
 pub struct EntryWithSize {
+    /// Lowercase hexadecimal digest.
     pub hash: String,
+    /// Algorithm recorded for the digest.
     pub algorithm: String,
+    /// Whether sampled hashing produced the digest.
     pub fast_mode: bool,
+    /// File length when the source format provides it.
     pub file_size: Option<u64>,
 }
 
 /// Statistics about the analyzed database
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AnalyzeStats {
+    /// Number of file entries read from the database.
     pub total_files: usize,
+    /// Number of distinct digest strings.
     pub unique_hashes: usize,
+    /// Number of digest groups containing multiple paths.
     pub duplicate_groups: usize,
+    /// Total paths belonging to duplicate groups.
     pub duplicate_files: usize,
+    /// Size of the database file itself.
     pub database_file_size: u64,
+    /// Detected source format name.
     pub database_format: String,
+    /// Distinct algorithms recorded by the database.
     pub algorithms: Vec<String>,
+    /// Number of sampled-mode entries.
     pub fast_mode_files: usize,
+    /// Number of full-mode entries.
     pub normal_mode_files: usize,
     /// Total size of all files (only for hashdeep format)
     pub total_file_size: Option<u64>,
@@ -48,8 +64,11 @@ pub struct AnalyzeStats {
 /// Complete analysis report
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AnalyzeReport {
+    /// Database that was analyzed.
     pub database_path: PathBuf,
+    /// Aggregate database statistics.
     pub stats: AnalyzeStats,
+    /// Groups of paths sharing a digest.
     pub duplicate_groups: Vec<DuplicateGroup>,
 }
 
@@ -131,6 +150,7 @@ impl AnalyzeReport {
     }
 
     /// Format the report as JSON
+    #[cfg(feature = "reporting")]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         #[derive(serde::Serialize)]
         struct JsonOutput {
@@ -361,7 +381,20 @@ impl AnalyzeEngine {
         })?;
 
         let reader: Box<dyn BufRead> = if DatabaseHandler::is_compressed(path) {
-            Box::new(std::io::BufReader::new(xz2::read::XzDecoder::new(file)))
+            #[cfg(feature = "xz")]
+            {
+                Box::new(std::io::BufReader::new(xz2::read::XzDecoder::new(file)))
+            }
+            #[cfg(not(feature = "xz"))]
+            {
+                let _ = file;
+                return Err(HashUtilityError::InvalidArguments {
+                    message: format!(
+                        "reading '{}' requires the 'xz' Cargo feature",
+                        path.display()
+                    ),
+                });
+            }
         } else {
             Box::new(std::io::BufReader::new(file))
         };
@@ -401,17 +434,13 @@ impl AnalyzeEngine {
                 continue;
             }
 
-            let expected_hash_count = if algorithms.is_empty() {
-                None
-            } else {
-                Some(algorithms.len())
-            };
+            let expected_hash_count = (!algorithms.is_empty()).then_some(algorithms.len());
             let Some(record) = DatabaseHandler::parse_hashdeep_record(&line, expected_hash_count)
             else {
                 continue;
             };
 
-            // Use the first hash for analysis consistency.
+            // Use the first digest for compatibility with the analysis engine.
             let hash = &record.hashes[0];
             if hash.is_empty() {
                 continue;
@@ -564,32 +593,25 @@ mod tests {
 
     #[test]
     fn test_analyze_hashdeep_format_with_commas_in_filename() {
-        let db_path = "test_analyze_hashdeep_commas.txt";
+        let temporary = tempfile::NamedTempFile::new().unwrap();
         let content = "%%%% HASHDEEP-1.0\n\
                        %%%% size,sha256,filename\n\
                        ## Invoked from: test\n\
                        ##\n\
                        1000,hash1,file,one.txt\n\
                        1000,hash1,file,two.txt\n";
-        fs::write(db_path, content).unwrap();
+        fs::write(temporary.path(), content).unwrap();
 
-        let engine = AnalyzeEngine::new();
-        let report = engine.analyze(Path::new(db_path)).unwrap();
-
+        let report = AnalyzeEngine::new().analyze(temporary.path()).unwrap();
         assert_eq!(report.stats.total_files, 2);
         assert_eq!(report.stats.duplicate_groups, 1);
         assert_eq!(report.stats.total_file_size, Some(2000));
-        assert_eq!(report.duplicate_groups[0].paths.len(), 2);
         assert!(report.duplicate_groups[0]
             .paths
-            .iter()
-            .any(|path| path == &PathBuf::from("file,one.txt")));
+            .contains(&PathBuf::from("file,one.txt")));
         assert!(report.duplicate_groups[0]
             .paths
-            .iter()
-            .any(|path| path == &PathBuf::from("file,two.txt")));
-
-        fs::remove_file(db_path).unwrap();
+            .contains(&PathBuf::from("file,two.txt")));
     }
 
     #[test]

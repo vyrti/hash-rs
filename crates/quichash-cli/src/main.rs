@@ -1,27 +1,15 @@
-mod analyze;
-mod benchmark;
 mod cli;
-mod compare;
-mod database;
-mod dedup;
-mod error;
-mod hash;
-mod ignore_handler;
-mod path_utils;
-mod scan;
-mod verify;
-mod wildcard;
-
-use benchmark::BenchmarkEngine;
 use cli::{parse_args, Command};
-use database::DatabaseFormat;
-use error::HashUtilityError;
-use hash::{HashComputer, HashRegistry};
-use scan::ScanEngine;
+use quichash_core::benchmark::BenchmarkEngine;
+use quichash_core::database::DatabaseFormat;
+use quichash_core::error::HashUtilityError;
+use quichash_core::hash::{HashComputer, HashRegistry};
+use quichash_core::scan::ScanEngine;
+use quichash_core::verify::VerifyEngine;
+use quichash_core::{analyze, benchmark, compare, database, dedup, hash, scan, verify, wildcard};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process;
-use verify::VerifyEngine;
 
 fn main() {
     // Parse command-line arguments
@@ -313,10 +301,18 @@ fn handle_scan_command(
         }
     }
 
+    if !json {
+        for directory in &directories {
+            println!("Scanning directory: {}", directory.display());
+        }
+        if fast {
+            println!("Fast mode enabled: sampling first, middle, and last 100MB of large files");
+        }
+    }
+
     let engine = ScanEngine::with_parallel(parallel)
         .with_fast_mode(fast)
-        .with_format(format)
-        .with_quiet(json);
+        .with_format(format);
 
     // Scan all matched directories and aggregate stats
     let mut total_stats = scan::ScanStats {
@@ -400,9 +396,7 @@ fn handle_scan_command(
     let final_output = if compress {
         use database::DatabaseHandler;
 
-        if !json {
-            println!("Compressing database...");
-        }
+        println!("Compressing database...");
         let compressed_path = DatabaseHandler::compress_database(output)?;
 
         // Remove the uncompressed file
@@ -414,13 +408,30 @@ fn handle_scan_command(
             )
         })?;
 
-        if !json {
-            println!("Database compressed to: {}", compressed_path.display());
-        }
+        println!("Database compressed to: {}", compressed_path.display());
         compressed_path
     } else {
         output.to_path_buf()
     };
+
+    if !json {
+        println!("\nScan complete!");
+        println!("Files processed: {}", stats.files_processed);
+        println!("Files failed: {}", stats.files_failed);
+        println!(
+            "Total bytes: {} ({:.2} MB)",
+            stats.total_bytes,
+            stats.total_bytes as f64 / 1_048_576.0
+        );
+        println!("Duration: {:.2}s", stats.duration.as_secs_f64());
+        if stats.duration.as_secs_f64() > 0.0 {
+            println!(
+                "Throughput: {:.2} MB/s",
+                (stats.total_bytes as f64 / 1_048_576.0) / stats.duration.as_secs_f64()
+            );
+        }
+        println!("Output written to: {}", final_output.display());
+    }
 
     // Output results in JSON if requested
     if json {
@@ -475,7 +486,7 @@ fn handle_verify_command(
     parallel: bool,
     json: bool,
 ) -> Result<(), HashUtilityError> {
-    let engine = VerifyEngine::with_parallel(parallel).with_quiet(json);
+    let engine = VerifyEngine::with_parallel(parallel);
 
     // Expand wildcard patterns
     let databases = wildcard::expand_pattern(database_pattern)?;
@@ -529,7 +540,7 @@ fn handle_verify_command(
                     db.display(),
                     dir.display()
                 );
-                report.display();
+                display_verify_report(report);
             }
 
             aggregated_report.matches += report.matches;
@@ -586,7 +597,7 @@ fn handle_verify_command(
         println!("{}", json_output);
     } else {
         // Display report in plain text
-        report.display();
+        display_verify_report(&report);
     }
 
     Ok(())
@@ -636,7 +647,7 @@ fn handle_benchmark_command(size_mb: usize, json: bool) -> Result<(), HashUtilit
         println!("{}", json_output);
     } else {
         // Display results in plain text
-        engine.display_results(&results);
+        display_benchmark_results(&results);
     }
 
     Ok(())
@@ -784,10 +795,7 @@ fn handle_dedup_command(
     use dedup::DedupEngine;
 
     // Create dedup engine with appropriate settings
-    let engine = DedupEngine::new()
-        .with_fast_mode(fast)
-        .with_parallel(true)
-        .with_quiet(json); // Always use parallel for better performance
+    let engine = DedupEngine::new().with_fast_mode(fast).with_parallel(true); // Always use parallel for better performance
 
     // Find duplicates
     let report = engine.find_duplicates(directory)?;
@@ -965,4 +973,92 @@ fn handle_analyze_command(
     }
 
     Ok(())
+}
+
+fn display_verify_report(report: &verify::VerifyReport) {
+    let has_issues = !report.mismatches.is_empty()
+        || !report.missing_files.is_empty()
+        || !report.new_files.is_empty();
+    println!("\n================================================================");
+    println!(
+        "{}",
+        if has_issues {
+            "                  FILE CHANGES DETECTED                         "
+        } else {
+            "                       ALL GOOD                                 "
+        }
+    );
+    println!("================================================================\n");
+    println!("Verification Summary:");
+    println!("  Matches:        {}", report.matches);
+    println!("  Mismatches:     {}", report.mismatches.len());
+    println!("  Missing files:  {}", report.missing_files.len());
+    println!("  New files:      {}", report.new_files.len());
+    if !has_issues {
+        println!("\nAll files match the database. No changes detected.");
+        println!("Total files verified: {}", report.matches);
+        return;
+    }
+    if !report.mismatches.is_empty() {
+        println!(
+            "\n--- Files with Changed Hashes ({}) ---",
+            report.mismatches.len()
+        );
+        for mismatch in &report.mismatches {
+            println!("\n  File: {}", mismatch.path.display());
+            println!("    Expected: {}", mismatch.expected);
+            println!("    Actual:   {}", mismatch.actual);
+        }
+        println!("----------------------------------------------------------------");
+    }
+    if !report.missing_files.is_empty() {
+        println!("\n--- Deleted Files ({}) ---", report.missing_files.len());
+        println!("(in database but not in filesystem)");
+        for path in &report.missing_files {
+            println!("  - {}", path.display());
+        }
+        println!("----------------------------------------------------------------");
+    }
+    if !report.new_files.is_empty() {
+        println!("\n--- New Files ({}) ---", report.new_files.len());
+        println!("(in filesystem but not in database)");
+        for path in &report.new_files {
+            println!("  + {}", path.display());
+        }
+        println!("----------------------------------------------------------------");
+    }
+    println!("\n================================================================");
+    println!(
+        "Total files checked:      {}",
+        report.matches + report.mismatches.len()
+    );
+    println!(
+        "Total files in database:  {}",
+        report.matches + report.mismatches.len() + report.missing_files.len()
+    );
+    println!(
+        "Total files in filesystem: {}",
+        report.matches + report.mismatches.len() + report.new_files.len()
+    );
+    println!("================================================================");
+}
+
+fn display_benchmark_results(results: &[benchmark::BenchmarkResult]) {
+    if results.is_empty() {
+        println!("No benchmark results to display.");
+        return;
+    }
+    let mut sorted = results.to_vec();
+    sorted.sort_by(|left, right| {
+        right
+            .throughput_mbps
+            .partial_cmp(&left.throughput_mbps)
+            .unwrap()
+    });
+    println!("\n{:<20} {:>15}", "Algorithm", "Throughput (MB/s)");
+    println!("{}", "-".repeat(37));
+    for result in sorted {
+        println!("{:<20} {:>15.2}", result.algorithm, result.throughput_mbps);
+    }
+    println!();
 }

@@ -1,0 +1,48 @@
+[package]
+name = "quichash-core"
+version.workspace = true
+edition.workspace = true
+description = "Reusable hashing, manifest, and verification engine for QuicHash"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[features]
+default = ["all-algorithms", "filesystem", "parallel", "mmap", "xz", "reporting"]
+all-algorithms = ["md5", "sha1", "sha2", "sha3", "blake2", "blake3", "xxhash"]
+md5 = ["dep:md-5"]
+sha1 = ["dep:sha1"]
+sha2 = ["dep:sha2"]
+sha3 = ["dep:sha3"]
+blake2 = ["dep:blake2"]
+blake3 = ["dep:blake3"]
+xxhash = ["dep:xxhash-rust"]
+filesystem = ["dep:crossbeam-channel", "dep:glob", "dep:ignore", "dep:jwalk"]
+parallel = ["dep:rayon", "blake3?/rayon"]
+mmap = ["dep:memmap2", "blake3?/mmap"]
+xz = ["dep:xz2"]
+reporting = ["dep:chrono", "dep:serde_json"]
+
+[dependencies]
+blake2 = { workspace = true, optional = true }
+blake3 = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+crossbeam-channel = { workspace = true, optional = true }
+glob = { workspace = true, optional = true }
+ignore = { workspace = true, optional = true }
+jwalk = { workspace = true, optional = true }
+md-5 = { workspace = true, optional = true }
+memmap2 = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+sha3 = { workspace = true, optional = true }
+xxhash-rust = { workspace = true, optional = true }
+xz2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+hex = "0.4"
+tempfile.workspace = true

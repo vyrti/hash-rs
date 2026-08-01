@@ -1,8 +1,8 @@
-// CLI interface module
+//! Command-line parsing.
 // Handles command-line argument parsing and validation
 
-use crate::error::HashUtilityError;
 use clap::{Parser, Subcommand};
+use quichash_core::error::HashUtilityError;
 use std::path::PathBuf;
 
 /// Hash Utility - Cryptographic hash computation and verification tool
@@ -263,10 +263,6 @@ pub fn parse_args() -> Result<Cli, HashUtilityError> {
         }
     }
 }
-
-// Re-export HashUtilityError as CliError for backward compatibility
-#[allow(dead_code)]
-pub type CliError = HashUtilityError;
 
 #[cfg(test)]
 mod tests {

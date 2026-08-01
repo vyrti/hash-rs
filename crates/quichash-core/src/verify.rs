@@ -1,4 +1,4 @@
-// Verification module
+//! Manifest verification.
 // Compares current hashes against stored database
 
 use std::collections::{HashMap, HashSet};
@@ -8,32 +8,42 @@ use std::sync::{Arc, Mutex};
 use crate::database::{DatabaseEntry, DatabaseHandler};
 use crate::error::HashUtilityError;
 use crate::hash::HashComputer;
+use crate::operation::{LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle};
 use crate::path_utils;
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 
-// Re-export HashUtilityError as VerifyError for backward compatibility
+/// Backward-compatible error name for verification operations.
 pub type VerifyError = HashUtilityError;
 
 /// Represents a hash mismatch between expected and actual values
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Mismatch {
+    /// File whose digest differs.
     pub path: PathBuf,
+    /// Digest stored in the database.
     pub expected: String,
+    /// Digest recomputed from the file.
     pub actual: String,
 }
 
 /// Report of verification results
 #[derive(Debug, serde::Serialize)]
 pub struct VerifyReport {
+    /// Number of files with matching digests.
     pub matches: usize,
+    /// Files whose expected and actual digests differ.
     pub mismatches: Vec<Mismatch>,
+    /// Database paths missing from the verified directory.
     pub missing_files: Vec<PathBuf>,
+    /// Directory paths absent from the database.
     pub new_files: Vec<PathBuf>,
 }
 
 impl VerifyReport {
-    /// Display a detailed report of verification results
+    /// Legacy display hook retained for API compatibility.
+    ///
+    /// The reusable core performs no terminal output. Consume the public report
+    /// fields and render them in the embedding application.
     pub fn display(&self) {
         // Determine overall status
         let has_issues = !self.mismatches.is_empty()
@@ -113,7 +123,6 @@ impl VerifyReport {
 pub struct VerifyEngine {
     computer: HashComputer,
     parallel: bool,
-    quiet: bool,
 }
 
 impl VerifyEngine {
@@ -122,7 +131,6 @@ impl VerifyEngine {
         Self {
             computer: HashComputer::new(),
             parallel: true,
-            quiet: false,
         }
     }
 
@@ -131,14 +139,7 @@ impl VerifyEngine {
         Self {
             computer: HashComputer::new(),
             parallel,
-            quiet: false,
         }
-    }
-
-    /// Enable or disable progress output
-    pub fn with_quiet(mut self, quiet: bool) -> Self {
-        self.quiet = quiet;
-        self
     }
 
     /// Verify directory contents against a hash database
@@ -168,26 +169,61 @@ impl VerifyEngine {
             });
         }
 
-        // Load the hash database
-        let database = DatabaseHandler::read_database(database_path)?;
-
-        // Get canonical path of database file to exclude it from scan
+        let manifest = DatabaseHandler::read_manifest_with_policy(
+            database_path,
+            crate::operation::FailurePolicy::Continue,
+        )?
+        .manifest;
+        if manifest
+            .entries
+            .iter()
+            .all(|entry| entry.digests.len() == 1)
+        {
+            let database = DatabaseHandler::read_database(database_path)?;
+            let database_canonical_path = database_path.canonicalize().ok();
+            let mut current_files = self.collect_files_optimized(directory)?;
+            if let Some(path) = &database_canonical_path {
+                current_files.remove(path);
+            }
+            let database = self.resolve_database_paths_optimized(&database, directory)?;
+            return if self.parallel {
+                self.verify_parallel(database, current_files)
+            } else {
+                self.verify_sequential(database, current_files)
+            };
+        }
+        let typed = crate::manifest::verify_folder(
+            &manifest,
+            directory,
+            crate::operation::FailurePolicy::Continue,
+            &crate::operation::NoopObserver,
+        )?;
+        let root = directory
+            .canonicalize()
+            .unwrap_or_else(|_| directory.to_owned());
         let database_canonical = database_path.canonicalize().ok();
-
-        // Collect all files in the directory (as canonical paths), excluding the database file
-        let mut current_files = self.collect_files_optimized(directory)?;
-        if let Some(db_path) = &database_canonical {
-            current_files.remove(db_path);
+        let absolute = |path: PathBuf| {
+            let joined = root.join(path);
+            joined.canonicalize().unwrap_or(joined)
+        };
+        let mut new_files: Vec<_> = typed.new_files.into_iter().map(absolute).collect();
+        if let Some(database) = database_canonical {
+            new_files.retain(|path| path != &database);
         }
-
-        // Convert database paths to canonical for comparison (optimized with caching)
-        let database_canonical = self.resolve_database_paths_optimized(&database, directory)?;
-
-        if self.parallel {
-            self.verify_parallel(database_canonical, current_files)
-        } else {
-            self.verify_sequential(database_canonical, current_files)
-        }
+        Ok(VerifyReport {
+            matches: typed.matches,
+            mismatches: typed
+                .mismatches
+                .into_iter()
+                .map(|mismatch| Mismatch {
+                    path: absolute(mismatch.path),
+                    expected: mismatch.expected,
+                    actual: mismatch.actual,
+                })
+                .collect(),
+            missing_files: typed.missing_files.into_iter().map(absolute).collect(),
+            new_files,
+        })
     }
 
     /// Sequential verification implementation
@@ -203,18 +239,13 @@ impl VerifyEngine {
         let mut checked_files = HashSet::new();
 
         // Create progress bar
-        let pb = if self.quiet {
-            ProgressBar::hidden()
-        } else {
-            let pb = ProgressBar::new(database_canonical.len() as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | {msg}")
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            pb
-        };
+        let pb = ProgressBar::new(database_canonical.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
 
         // Check each file in the database
         for (db_path, entry) in &database_canonical {
@@ -289,18 +320,13 @@ impl VerifyEngine {
         let missing_files = Arc::new(Mutex::new(Vec::new()));
 
         // Create progress bar
-        let pb = if self.quiet {
-            ProgressBar::hidden()
-        } else {
-            let pb = ProgressBar::new(database_canonical.len() as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | {msg}")
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            pb
-        };
+        let pb = ProgressBar::new(database_canonical.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
 
         // Clone Arc references for use in parallel closure
         let matches_clone = Arc::clone(&matches);

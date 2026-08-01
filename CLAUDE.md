@@ -10,17 +10,22 @@ QuicHash (quichash) is a Rust command-line application for cryptographic hash co
 
 ```bash
 # Build
-cargo build                          # Debug build
+cargo build --workspace             # Debug build
 
 # Testing
-cargo test                           # Run all tests
+cargo test --workspace --all-features # Run all tests
 cargo test <test_name>               # Run single test
 
 # Run
-cargo run -- <args>                  # Run with arguments
+cargo run -p quichash -- <args>      # Run CLI
 ```
 
 ## Architecture
+
+### Workspace Structure
+
+- `crates/quichash-core` owns reusable hashing, manifests, formats, and engines.
+- `crates/quichash-cli` owns Clap parsing, terminal rendering, and the `hash` binary.
 
 ### Module Structure
 

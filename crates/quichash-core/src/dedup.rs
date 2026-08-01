@@ -1,11 +1,11 @@
-// Dedup engine module
+//! Duplicate-file analysis.
 // Finds duplicate files within a directory by comparing hash values
 
 use crate::error::HashUtilityError;
 use crate::hash::HashComputer;
 use crate::ignore_handler::IgnoreHandler;
+use crate::operation::{LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle};
 use crossbeam_channel::bounded;
-use indicatif::{ProgressBar, ProgressStyle};
 use jwalk::WalkDir;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -18,13 +18,20 @@ use std::time::{Duration, Instant};
 /// Statistics collected during a dedup scan
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DedupStats {
+    /// Number of regular files considered.
     pub files_scanned: usize,
+    /// Number of files that could not be processed.
     pub files_failed: usize,
+    /// Sum of file sizes considered.
     pub total_bytes: u64,
+    /// Number of digest groups containing duplicates.
     pub duplicate_groups: usize,
+    /// Number of files belonging to duplicate groups.
     pub duplicate_files: usize,
+    /// Bytes theoretically reclaimable by retaining one file per group.
     pub wasted_space: u64,
     #[serde(serialize_with = "serialize_duration")]
+    /// Elapsed scan time, serialized as seconds.
     pub duration: Duration,
 }
 
@@ -39,23 +46,32 @@ where
 /// Report of duplicate files found in a directory
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DedupReport {
+    /// Aggregate scan and duplicate statistics.
     pub stats: DedupStats,
+    /// Duplicate groups including size information.
     pub duplicate_groups: Vec<DuplicateGroupWithSize>,
 }
 
 /// Duplicate group with file size information
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DuplicateGroupWithSize {
+    /// Digest shared by the group.
     pub hash: String,
+    /// Paths with the shared digest.
     pub paths: Vec<PathBuf>,
+    /// Number of paths in the group.
     pub count: usize,
+    /// Size of each file in the group.
     pub file_size: u64,
+    /// Reclaimable bytes if all but one copy were removed.
     pub wasted_space: u64, // (count - 1) * file_size
 }
 
 impl DedupReport {
-    /// Display the dedup report in plain text format
-    #[allow(dead_code)]
+    /// Legacy display hook retained for API compatibility.
+    ///
+    /// The core crate does not write terminal output; consume the report fields
+    /// or [`Self::to_json`] in the embedding application.
     pub fn display(&self) {
         println!("\n=== Duplicate Files Report ===\n");
 
@@ -106,7 +122,8 @@ impl DedupReport {
         println!();
     }
 
-    /// Format the dedup report as JSON string
+    /// Serialize this report as pretty-printed JSON.
+    #[cfg(feature = "reporting")]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         #[derive(serde::Serialize)]
         struct JsonOutput {
@@ -156,7 +173,6 @@ pub struct DedupEngine {
     computer: HashComputer,
     fast_mode: bool,
     parallel: bool,
-    quiet: bool,
 }
 
 impl DedupEngine {
@@ -167,7 +183,6 @@ impl DedupEngine {
             computer: HashComputer::new(),
             fast_mode: false,
             parallel: true, // Default to parallel for better performance
-            quiet: false,
         }
     }
 
@@ -180,12 +195,6 @@ impl DedupEngine {
     /// Enable or disable parallel processing
     pub fn with_parallel(mut self, parallel: bool) -> Self {
         self.parallel = parallel;
-        self
-    }
-
-    /// Enable or disable stdout status output
-    pub fn with_quiet(mut self, quiet: bool) -> Self {
-        self.quiet = quiet;
         self
     }
 
@@ -204,12 +213,10 @@ impl DedupEngine {
             HashUtilityError::from_io_error(e, "scanning directory", Some(root.to_path_buf()))
         })?;
 
-        if !self.quiet {
-            println!("Scanning directory for duplicates: {}", root.display());
-            println!("Using BLAKE3 algorithm (fast and secure)");
-        }
+        println!("Scanning directory for duplicates: {}", root.display());
+        println!("Using BLAKE3 algorithm (fast and secure)");
 
-        if self.fast_mode && !self.quiet {
+        if self.fast_mode {
             println!("Fast mode enabled: sampling first, middle, and last 100MB of large files");
         }
 
@@ -265,18 +272,13 @@ impl DedupEngine {
         let mut hash_map: HashMap<String, Vec<(PathBuf, u64)>> = HashMap::new();
 
         // Create progress bar
-        let pb = if self.quiet {
-            ProgressBar::hidden()
-        } else {
-            let pb = ProgressBar::new(files.len() as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            pb
-        };
+        let pb = ProgressBar::new(files.len() as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
 
         // Process each file
         for file_path in files.iter() {
@@ -339,20 +341,13 @@ impl DedupEngine {
         let total_bytes = Arc::new(Mutex::new(0u64));
 
         // Create progress bar
-        let pb = if self.quiet {
-            ProgressBar::hidden()
-        } else {
-            let pb = ProgressBar::new(0);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "[{elapsed_precise}] Counting... {pos} files found | Processing: {msg}",
-                    )
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            pb
-        };
+        let pb = ProgressBar::new(0);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] Counting... {pos} files found | Processing: {msg}")
+                .unwrap()
+                .progress_chars("=>-"),
+        );
 
         // Create bounded channel
         let (sender, receiver) = bounded::<PathBuf>(10000);
@@ -363,7 +358,6 @@ impl DedupEngine {
 
         // Capture fast_mode for use in closure
         let fast_mode = self.fast_mode;
-        let quiet = self.quiet;
 
         // Clone for walker thread
         let walker_root = canonical_root.to_path_buf();
@@ -380,16 +374,14 @@ impl DedupEngine {
             );
 
             // Mark discovery as complete
-            if !quiet {
-                let total = *total_files_discovered_walker.lock().unwrap();
-                pb_walker.set_length(total as u64);
-                pb_walker.set_style(
-                    ProgressStyle::default_bar()
-                        .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
-                        .unwrap()
-                        .progress_chars("=>-"),
-                );
-            }
+            let total = *total_files_discovered_walker.lock().unwrap();
+            pb_walker.set_length(total as u64);
+            pb_walker.set_style(
+                ProgressStyle::default_bar()
+                    .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
+                    .unwrap()
+                    .progress_chars("=>-")
+            );
             *discovery_complete_walker.lock().unwrap() = true;
 
             result
@@ -503,31 +495,26 @@ impl DedupEngine {
             }
         };
 
-        // Use jwalk for parallel directory traversal
         let mut walker = WalkDir::new(root)
             .parallelism(jwalk::Parallelism::RayonNewPool(0))
             .skip_hidden(false)
             .follow_links(false);
-
         if let Some(handler) = ignore_handler.clone() {
             let root = root.to_path_buf();
-            walker = walker.process_read_dir(move |_depth, _dir_path, _state, children| {
-                // Prune ignored directories before descending so patterns like `A/`
-                // exclude their contents on the parallel walker.
+            walker = walker.process_read_dir(move |_depth, _dir, _state, children| {
                 for child_result in children.iter_mut() {
                     let Ok(child) = child_result else {
                         continue;
                     };
-
                     if !child.file_type.is_dir() {
                         continue;
                     }
-
                     let child_path = child.path();
-                    if let Ok(rel_path) = child_path.strip_prefix(&root) {
-                        if handler.should_ignore(rel_path, true) {
-                            child.read_children_path = None;
-                        }
+                    if child_path
+                        .strip_prefix(&root)
+                        .is_ok_and(|relative| handler.should_ignore(relative, true))
+                    {
+                        child.read_children_path = None;
                     }
                 }
             });
@@ -709,37 +696,22 @@ mod tests {
 
     #[test]
     fn test_walk_directory_streaming_skips_ignored_directory_patterns() {
-        let test_dir = "test_dedup_ignore_directory_pattern";
-        fs::create_dir_all(format!("{}/A/sub", test_dir)).unwrap();
-        fs::create_dir_all(format!("{}/B", test_dir)).unwrap();
-
-        fs::write(format!("{}/.hashignore", test_dir), b"A/\n").unwrap();
-        fs::write(format!("{}/A/file1.txt", test_dir), b"one").unwrap();
-        fs::write(format!("{}/A/sub/file2.txt", test_dir), b"two").unwrap();
-        fs::write(format!("{}/B/file3.txt", test_dir), b"three").unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temporary.path().join("A/sub")).unwrap();
+        fs::create_dir_all(temporary.path().join("B")).unwrap();
+        fs::write(temporary.path().join(".hashignore"), b"A/\n").unwrap();
+        fs::write(temporary.path().join("A/file1.txt"), b"one").unwrap();
+        fs::write(temporary.path().join("A/sub/file2.txt"), b"two").unwrap();
+        fs::write(temporary.path().join("B/file3.txt"), b"three").unwrap();
 
         let (sender, receiver) = bounded::<PathBuf>(16);
-        let total_files_discovered = Arc::new(Mutex::new(0usize));
-
-        DedupEngine::walk_directory_streaming(
-            Path::new(test_dir),
-            sender,
-            Arc::clone(&total_files_discovered),
-        )
-        .unwrap();
-
-        let files: Vec<PathBuf> = receiver.iter().collect();
+        let discovered = Arc::new(Mutex::new(0));
+        DedupEngine::walk_directory_streaming(temporary.path(), sender, Arc::clone(&discovered))
+            .unwrap();
+        let files: Vec<_> = receiver.iter().collect();
 
         assert_eq!(files.len(), 1);
-        assert_eq!(*total_files_discovered.lock().unwrap(), 1);
-        assert!(files.iter().any(|path| path.ends_with(Path::new("B").join("file3.txt"))));
-        assert!(!files
-            .iter()
-            .any(|path| path.ends_with(Path::new("A").join("file1.txt"))));
-        assert!(!files.iter().any(|path| {
-            path.ends_with(Path::new("A").join("sub").join("file2.txt"))
-        }));
-
-        fs::remove_dir_all(test_dir).unwrap();
+        assert_eq!(*discovered.lock().unwrap(), 1);
+        assert!(files[0].ends_with(Path::new("B").join("file3.txt")));
     }
 }

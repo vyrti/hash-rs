@@ -1,21 +1,29 @@
-// Database format handler module
+//! Standard and hashdeep manifest formats.
 // Reads and writes plain text hash database files
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "xz")]
 use xz2::read::XzDecoder;
+#[cfg(feature = "xz")]
 use xz2::write::XzEncoder;
 
 use crate::error::HashUtilityError;
+use crate::hash::{Algorithm, DigestValue, HashMode};
+use crate::manifest::{Manifest, ManifestEntry};
+use crate::operation::FailurePolicy;
 use crate::path_utils;
 
 /// Database entry with metadata
 #[derive(Debug, Clone)]
 pub struct DatabaseEntry {
+    /// Lowercase hexadecimal digest.
     pub hash: String,
+    /// Algorithm name recorded in the row.
     pub algorithm: String,
+    /// Whether the digest was created with sampled hashing.
     pub fast_mode: bool,
 }
 
@@ -30,13 +38,31 @@ pub enum DatabaseFormat {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HashdeepRecord {
-    pub size: u64,
-    pub hashes: Vec<String>,
-    pub filename: String,
+    pub(crate) size: u64,
+    pub(crate) hashes: Vec<String>,
+    pub(crate) filename: String,
 }
 
 /// Handler for reading and writing hash database files
 pub struct DatabaseHandler;
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+/// Malformed input line retained while reading with a continue policy.
+pub struct DatabaseIssue {
+    /// One-based source line number.
+    pub line: usize,
+    /// Explanation of why the line could not be parsed.
+    pub message: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+/// Typed manifest and non-fatal parsing issues returned together.
+pub struct ManifestRead {
+    /// Successfully parsed and canonicalized manifest entries.
+    pub manifest: Manifest,
+    /// Malformed lines skipped under [`FailurePolicy::Continue`].
+    pub issues: Vec<DatabaseIssue>,
+}
 
 impl DatabaseHandler {
     /// Check if a path has .xz extension (compressed database)
@@ -47,8 +73,11 @@ impl DatabaseHandler {
             .unwrap_or(false)
     }
 
-    /// Compress a database file with LZMA
-    /// Creates a new file with .xz extension
+    /// Compress a database file with LZMA.
+    ///
+    /// Creates a sibling path with an `.xz` suffix and returns that path. When
+    /// the `xz` feature is disabled, this returns an explanatory error.
+    #[cfg(feature = "xz")]
     pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError> {
         // Read the input file
         let input_file = File::open(input_path).map_err(|e| {
@@ -98,6 +127,17 @@ impl DatabaseHandler {
         Ok(output_path)
     }
 
+    #[cfg(not(feature = "xz"))]
+    /// Return an error explaining that XZ support was compiled out.
+    pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError> {
+        Err(HashUtilityError::InvalidArguments {
+            message: format!(
+                "XZ compression for '{}' requires the 'xz' Cargo feature",
+                input_path.display()
+            ),
+        })
+    }
+
     /// Open a database file, automatically decompressing if it has .xz extension
     fn open_database_reader(path: &Path) -> Result<Box<dyn BufRead>, HashUtilityError> {
         let file = File::open(path).map_err(|e| {
@@ -105,9 +145,21 @@ impl DatabaseHandler {
         })?;
 
         if Self::is_compressed(path) {
-            // Decompress on the fly
-            let decoder = XzDecoder::new(file);
-            Ok(Box::new(BufReader::new(decoder)))
+            #[cfg(feature = "xz")]
+            {
+                let decoder = XzDecoder::new(file);
+                Ok(Box::new(BufReader::new(decoder)))
+            }
+            #[cfg(not(feature = "xz"))]
+            {
+                let _ = file;
+                Err(HashUtilityError::InvalidArguments {
+                    message: format!(
+                        "reading '{}' requires the 'xz' Cargo feature",
+                        path.display()
+                    ),
+                })
+            }
         } else {
             // Read normally
             Ok(Box::new(BufReader::new(file)))
@@ -135,18 +187,16 @@ impl DatabaseHandler {
                 return Ok(DatabaseFormat::Hashdeep);
             }
 
-            // Check for standard format first so commas in filenames do not
-            // force standard database rows down the hashdeep parser.
+            // Prefer a valid standard row so a comma in its filename does not
+            // incorrectly select the hashdeep parser.
             if Self::parse_line(trimmed).is_some() {
                 return Ok(DatabaseFormat::Standard);
             }
 
-            // Check for hashdeep CSV data lines.
             if Self::parse_hashdeep_record(trimmed, None).is_some() {
                 return Ok(DatabaseFormat::Hashdeep);
             }
 
-            // Fall back to standard format if the row still looks space-delimited.
             if trimmed.contains("  ") {
                 return Ok(DatabaseFormat::Standard);
             }
@@ -212,6 +262,225 @@ impl DatabaseHandler {
             DatabaseFormat::Standard => Self::read_standard_database(path),
             DatabaseFormat::Hashdeep => Self::read_hashdeep_database(path),
         }
+    }
+
+    /// Read every digest from a standard or hashdeep manifest.
+    ///
+    /// Format is detected automatically. This method is fail-fast; use
+    /// [`Self::read_manifest_with_policy`] to retain malformed-line issues.
+    pub fn read_manifest(path: &Path) -> Result<Manifest, HashUtilityError> {
+        Ok(Self::read_manifest_with_policy(path, FailurePolicy::FailFast)?.manifest)
+    }
+
+    /// Read a typed manifest, optionally retaining malformed-line issues.
+    ///
+    /// Standard rows for the same path are merged, and every declared hashdeep
+    /// digest column is retained. The returned manifest is canonicalized.
+    pub fn read_manifest_with_policy(
+        path: &Path,
+        failure_policy: FailurePolicy,
+    ) -> Result<ManifestRead, HashUtilityError> {
+        use std::collections::BTreeMap;
+
+        let format = Self::detect_format(path)?;
+        let reader = Self::open_database_reader(path)?;
+        let mut entries: BTreeMap<PathBuf, ManifestEntry> = BTreeMap::new();
+        let mut issues = Vec::new();
+        let mut hashdeep_algorithms = Vec::new();
+        for (index, line_result) in reader.lines().enumerate() {
+            let line_number = index + 1;
+            let line = line_result.map_err(|error| {
+                HashUtilityError::from_io_error(error, "reading database", Some(path.to_owned()))
+            })?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("##") {
+                continue;
+            }
+            if format == DatabaseFormat::Hashdeep && trimmed.starts_with("%%%%") {
+                if let Some(fields) = trimmed.split_whitespace().find(|field| field.contains(',')) {
+                    let columns: Vec<_> = fields.split(',').collect();
+                    if columns.len() >= 3
+                        && columns[0] == "size"
+                        && columns.last() == Some(&"filename")
+                    {
+                        hashdeep_algorithms = columns[1..columns.len() - 1]
+                            .iter()
+                            .map(|name| name.parse::<Algorithm>())
+                            .collect::<Result<Vec<_>, _>>()?;
+                    }
+                }
+                continue;
+            }
+            if trimmed.starts_with('%') || trimmed.starts_with('#') {
+                continue;
+            }
+            let parsed = match format {
+                DatabaseFormat::Standard => Self::parse_manifest_standard(&line),
+                DatabaseFormat::Hashdeep => {
+                    Self::parse_manifest_hashdeep(&line, &hashdeep_algorithms)
+                }
+            };
+            match parsed {
+                Ok((path, size, mode, digests)) => {
+                    let entry = entries
+                        .entry(path.clone())
+                        .or_insert_with(|| ManifestEntry {
+                            relative_path: path,
+                            size,
+                            mode,
+                            digests: Vec::new(),
+                        });
+                    if entry.size == 0 {
+                        entry.size = size;
+                    }
+                    for digest in digests {
+                        if let Some(existing) = entry
+                            .digests
+                            .iter_mut()
+                            .find(|item| item.algorithm == digest.algorithm)
+                        {
+                            *existing = digest;
+                        } else {
+                            entry.digests.push(digest);
+                        }
+                    }
+                }
+                Err(reason) if failure_policy == FailurePolicy::Continue => {
+                    issues.push(DatabaseIssue {
+                        line: line_number,
+                        message: reason,
+                    });
+                }
+                Err(reason) => {
+                    return Err(HashUtilityError::DatabaseParseError {
+                        path: path.to_owned(),
+                        line: line_number,
+                        reason,
+                    });
+                }
+            }
+        }
+        let mut manifest = Manifest {
+            entries: entries.into_values().collect(),
+        };
+        manifest.canonicalize();
+        Ok(ManifestRead { manifest, issues })
+    }
+
+    /// Write every manifest digest in standard or hashdeep format.
+    ///
+    /// Standard output contains one row per digest. Hashdeep output contains
+    /// one row per file and a column for every algorithm present in the
+    /// manifest.
+    pub fn write_manifest(
+        writer: &mut impl Write,
+        manifest: &Manifest,
+        format: DatabaseFormat,
+    ) -> io::Result<()> {
+        let mut manifest = manifest.clone();
+        manifest.canonicalize();
+        match format {
+            DatabaseFormat::Standard => {
+                for entry in &manifest.entries {
+                    for digest in &entry.digests {
+                        Self::write_entry(
+                            writer,
+                            &digest.to_hex(),
+                            digest.algorithm.canonical_name(),
+                            entry.mode == HashMode::Sampled,
+                            &entry.relative_path,
+                        )?;
+                    }
+                }
+            }
+            DatabaseFormat::Hashdeep => {
+                let mut algorithms: Vec<_> = manifest
+                    .entries
+                    .iter()
+                    .flat_map(|entry| entry.digests.iter().map(|digest| digest.algorithm))
+                    .collect();
+                algorithms.sort();
+                algorithms.dedup();
+                let names: Vec<_> = algorithms
+                    .iter()
+                    .map(|algorithm| algorithm.canonical_name().to_owned())
+                    .collect();
+                Self::write_hashdeep_header(writer, &names)?;
+                for entry in &manifest.entries {
+                    let hashes: Vec<_> = algorithms
+                        .iter()
+                        .map(|algorithm| {
+                            entry
+                                .digests
+                                .iter()
+                                .find(|digest| digest.algorithm == *algorithm)
+                                .map(DigestValue::to_hex)
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    Self::write_hashdeep_entry(writer, entry.size, &hashes, &entry.relative_path)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_manifest_standard(
+        line: &str,
+    ) -> Result<(PathBuf, u64, HashMode, Vec<DigestValue>), String> {
+        let (hash, algorithm, fast, path) = Self::parse_line(line)
+            .ok_or_else(|| "expected '<hash>  <algorithm>  <mode>  <path>'".to_owned())?;
+        let algorithm = algorithm
+            .parse::<Algorithm>()
+            .map_err(|error| error.to_string())?;
+        let digest = DigestValue::from_hex(algorithm, &hash).map_err(|error| error.to_string())?;
+        Ok((
+            path,
+            0,
+            if fast {
+                HashMode::Sampled
+            } else {
+                HashMode::Full
+            },
+            vec![digest],
+        ))
+    }
+
+    fn parse_manifest_hashdeep(
+        line: &str,
+        declared_algorithms: &[Algorithm],
+    ) -> Result<(PathBuf, u64, HashMode, Vec<DigestValue>), String> {
+        let expected_hash_count =
+            (!declared_algorithms.is_empty()).then_some(declared_algorithms.len());
+        let record = Self::parse_hashdeep_record(line, expected_hash_count)
+            .ok_or_else(|| "expected 'size,hash...,filename'".to_owned())?;
+        let path = path_utils::parse_database_path(&record.filename);
+        let hashes = record.hashes;
+        let algorithms = if declared_algorithms.len() == hashes.len() {
+            declared_algorithms.to_vec()
+        } else {
+            hashes
+                .iter()
+                .map(|hash| {
+                    Self::infer_algorithm_from_hash(hash)
+                        .parse::<Algorithm>()
+                        .map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let digests = algorithms
+            .into_iter()
+            .zip(&hashes)
+            .filter_map(|(algorithm, hash)| {
+                (!hash.is_empty()).then_some(
+                    DigestValue::from_hex(algorithm, hash).map_err(|error| error.to_string()),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if digests.is_empty() {
+            return Err("row contains no hashes".to_owned());
+        }
+        Ok((path, record.size, HashMode::Full, digests))
     }
 
     /// Read a standard format database file
@@ -357,7 +626,7 @@ impl DatabaseHandler {
                         "Warning: Skipping malformed line {} in hashdeep database {}: {}",
                         line_num + 1,
                         path.display(),
-                        line
+                        trimmed
                     );
                 }
             }
@@ -373,11 +642,7 @@ impl DatabaseHandler {
         line: &str,
         algorithms: &[String],
     ) -> Option<Vec<(PathBuf, DatabaseEntry)>> {
-        let expected_hash_count = if algorithms.is_empty() {
-            None
-        } else {
-            Some(algorithms.len())
-        };
+        let expected_hash_count = (!algorithms.is_empty()).then_some(algorithms.len());
         let record = Self::parse_hashdeep_record(line, expected_hash_count)?;
         let path = path_utils::parse_database_path(&record.filename);
         let hashes = record.hashes;
@@ -406,7 +671,7 @@ impl DatabaseHandler {
                     entries.push((
                         path.clone(),
                         DatabaseEntry {
-                            hash: hash.to_string(),
+                            hash,
                             algorithm,
                             fast_mode: false,
                         },
@@ -427,41 +692,25 @@ impl DatabaseHandler {
         expected_hash_count: Option<usize>,
     ) -> Option<HashdeepRecord> {
         let parts: Vec<&str> = line.split(',').collect();
-
-        // Need at least: size, one hash, filename
         if parts.len() < 3 {
             return None;
         }
 
         let size = parts[0].trim().parse().ok()?;
-
         let filename_index = match expected_hash_count {
             Some(hash_count) => {
                 let index = 1 + hash_count;
-                if parts.len() <= index {
-                    return None;
-                }
-                index
+                (parts.len() > index).then_some(index)?
             }
             None => {
                 let remainder = &parts[1..];
-                if remainder.len() < 2 {
-                    return None;
-                }
-
-                let mut hash_count = 0;
-                for field in remainder {
-                    if Self::is_hashdeep_hash_field(field) {
-                        hash_count += 1;
-                    } else {
-                        break;
-                    }
-                }
-
+                let hash_count = remainder
+                    .iter()
+                    .take_while(|field| Self::is_hashdeep_hash_field(field))
+                    .count();
                 if hash_count == 0 {
                     return None;
                 }
-
                 if hash_count == remainder.len() {
                     parts.len() - 1
                 } else {
@@ -472,9 +721,9 @@ impl DatabaseHandler {
 
         let hashes: Vec<String> = parts[1..filename_index]
             .iter()
-            .map(|part| part.trim().to_string())
+            .map(|part| part.trim().to_owned())
             .collect();
-        if hashes.is_empty() || hashes.iter().any(|hash| hash.is_empty()) {
+        if hashes.is_empty() || hashes.iter().any(String::is_empty) {
             return None;
         }
 
@@ -486,7 +735,7 @@ impl DatabaseHandler {
         Some(HashdeepRecord {
             size,
             hashes,
-            filename: filename.to_string(),
+            filename,
         })
     }
 
@@ -514,6 +763,113 @@ impl DatabaseHandler {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn test_detect_format_standard_with_commas_in_filename() {
+        let temporary = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            temporary.path(),
+            "abc123  sha256  normal  path/to/file,with,commas.txt\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            DatabaseHandler::detect_format(temporary.path()).unwrap(),
+            DatabaseFormat::Standard
+        );
+    }
+
+    #[test]
+    fn test_parse_hashdeep_line_with_commas_in_filename() {
+        let algorithms = vec!["sha256".to_owned()];
+        let line = "123,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,path/to/file,with,commas.txt";
+        let entries = DatabaseHandler::parse_hashdeep_line(line, &algorithms).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, PathBuf::from("path/to/file,with,commas.txt"));
+        assert_eq!(entries[0].1.algorithm, "sha256");
+    }
+
+    #[test]
+    fn test_read_hashdeep_database_with_commas_in_filename() {
+        let temporary = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            temporary.path(),
+            "%%%% HASHDEEP-1.0\n%%%% size,sha256,filename\n123,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,path/to/file,with,commas.txt\n",
+        )
+        .unwrap();
+
+        let database = DatabaseHandler::read_database(temporary.path()).unwrap();
+        let entry = database
+            .get(&PathBuf::from("path/to/file,with,commas.txt"))
+            .unwrap();
+        assert_eq!(entry.algorithm, "sha256");
+    }
+
+    #[test]
+    fn typed_hashdeep_round_trip_preserves_every_digest() {
+        let manifest = Manifest {
+            entries: vec![ManifestEntry {
+                relative_path: PathBuf::from("nested/file.txt"),
+                size: 5,
+                mode: HashMode::Full,
+                digests: vec![
+                    DigestValue {
+                        algorithm: Algorithm::Md5,
+                        bytes: vec![1; 16],
+                    },
+                    DigestValue {
+                        algorithm: Algorithm::Sha256,
+                        bytes: vec![2; 32],
+                    },
+                ],
+            }],
+        };
+        let temporary = tempfile::NamedTempFile::new().unwrap();
+        {
+            let mut file = std::fs::File::create(temporary.path()).unwrap();
+            DatabaseHandler::write_manifest(&mut file, &manifest, DatabaseFormat::Hashdeep)
+                .unwrap();
+        }
+        let restored = DatabaseHandler::read_manifest(temporary.path()).unwrap();
+        assert_eq!(restored, manifest);
+    }
+
+    #[test]
+    fn typed_standard_rows_merge_by_path() {
+        let temporary = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            temporary.path(),
+            format!(
+                "{}  md5  normal  file.txt\n{}  sha256  normal  file.txt\n",
+                "01".repeat(16),
+                "02".repeat(32),
+            ),
+        )
+        .unwrap();
+        let restored = DatabaseHandler::read_manifest(temporary.path()).unwrap();
+        assert_eq!(restored.entries.len(), 1);
+        assert_eq!(restored.entries[0].digests.len(), 2);
+    }
+
+    #[test]
+    fn typed_reader_is_fail_fast_by_default_and_can_collect_issues() {
+        let temporary = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            temporary.path(),
+            format!(
+                "malformed\n{}  blake3  normal  valid.txt\n",
+                "01".repeat(32),
+            ),
+        )
+        .unwrap();
+        assert!(DatabaseHandler::read_manifest(temporary.path()).is_err());
+        let read =
+            DatabaseHandler::read_manifest_with_policy(temporary.path(), FailurePolicy::Continue)
+                .unwrap();
+        assert_eq!(read.issues.len(), 1);
+        assert_eq!(read.manifest.entries.len(), 1);
+    }
 
     #[test]
     fn test_write_entry() {
@@ -847,62 +1203,6 @@ mod tests {
         assert!(found_mp4, "Should find .mp4 file");
 
         // Cleanup
-        fs::remove_file(temp_file).unwrap();
-    }
-
-    #[test]
-    fn test_detect_format_standard_with_commas_in_filename() {
-        let temp_file = "test_db_standard_commas_temp.txt";
-        let content = "abc123  sha256  normal  path/to/file,with,commas.txt\n";
-        fs::write(temp_file, content).unwrap();
-
-        let format = DatabaseHandler::detect_format(Path::new(temp_file)).unwrap();
-
-        assert_eq!(format, DatabaseFormat::Standard);
-
-        fs::remove_file(temp_file).unwrap();
-    }
-
-    #[test]
-    fn test_parse_hashdeep_line_with_commas_in_filename() {
-        let algorithms = vec!["sha256".to_string()];
-        let line = "123,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,path/to/file,with,commas.txt";
-
-        let entries = DatabaseHandler::parse_hashdeep_line(line, &algorithms).unwrap();
-
-        assert_eq!(entries.len(), 1);
-        let (path, entry) = &entries[0];
-        assert_eq!(path, &PathBuf::from("path/to/file,with,commas.txt"));
-        assert_eq!(
-            entry.hash,
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        );
-        assert_eq!(entry.algorithm, "sha256");
-        assert!(!entry.fast_mode);
-    }
-
-    #[test]
-    fn test_read_hashdeep_database_with_commas_in_filename() {
-        let temp_file = "test_db_hashdeep_commas_temp.txt";
-        let content = "%%%% HASHDEEP-1.0\n\
-                       %%%% size,sha256,filename\n\
-                       ## Invoked from: test\n\
-                       ##\n\
-                       123,0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,path/to/file,with,commas.txt\n";
-        fs::write(temp_file, content).unwrap();
-
-        let database = DatabaseHandler::read_database(Path::new(temp_file)).unwrap();
-
-        let entry = database
-            .get(&PathBuf::from("path/to/file,with,commas.txt"))
-            .unwrap();
-        assert_eq!(
-            entry.hash,
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        );
-        assert_eq!(entry.algorithm, "sha256");
-        assert!(!entry.fast_mode);
-
         fs::remove_file(temp_file).unwrap();
     }
 }

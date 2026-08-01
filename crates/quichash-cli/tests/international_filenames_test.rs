@@ -1,4 +1,4 @@
-// Test for handling filenames in 100+ languages and special characters
+// Integration tests for international filename support.
 // Ensures the hash utility works correctly with international filenames
 
 use std::fs;
@@ -48,7 +48,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Luxembourgish", "dëst_ass_en_ëmfaassende_testfichier_fir_d_ënnerstëtzung_vun_der_lëtzebuerger_sprooch.txt"),
         ("Faroese", "hetta_er_ein_umfatandi_royndarfíla_fyri_stuðul_av_føroyskt_mál_við_longum_navnum_áðíóúýæø.txt"),
         ("Greenlandic", "taanna_kalaallit_oqaasii_tapersersuinermi_atorsinnaasumik_immikkut_nassiunneqartoq.txt"),
-        
+
         // Cyrillic script (Extended)
         ("Russian", "это_комплексный_тестовый_файл_для_поддержки_русского_языка_с_длинными_именами_файлов.txt"),
         ("Ukrainian", "це_комплексний_тестовий_файл_для_підтримки_української_мови_з_довгими_назвами_файлів_їєіґ.txt"),
@@ -65,11 +65,11 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Bashkir", "был_башҡорт_телен_ярҙам_итеү_өсөн_киң_күләмле_һынау_файлы_оҙон_файл_исемдәре_менән_әөүңһ.txt"),
         ("Chechen", "хӀара_нохчийн_меттан_дӀахьедар_дан_шуьйра_йолу_синна_файл_йолу_цӀерийн_йолу_файл.txt"),
         ("Ossetian", "ай_у_ирон_æвзаджы_æххуысгæнæн_фæрцы_æнæмбарынгæнæн_тестон_файл_даргъ_номимæ.txt"),
-        
+
         // Greek (Extended)
         ("Greek", "αυτό_είναι_ένα_ολοκληρωμένο_δοκιμαστικό_αρχείο_για_την_υποστήριξη_της_ελληνικής_γλώσσας_αβγδεζηθικλμνξοπρστυφχψω.txt"),
         ("Greek_Ancient", "τοῦτό_ἐστι_δοκιμαστικὸν_ἀρχεῖον_τῆς_ἀρχαίας_ἑλληνικῆς_γλώσσης_μετὰ_μακρῶν_ὀνομάτων.txt"),
-        
+
         // Arabic script (RTL - Extended)
         ("Arabic", "هذا_ملف_اختبار_شامل_لدعم_اللغة_العربية_مع_أسماء_ملفات_طويلة_جدا_للاختبار_الكامل.txt"),
         ("Arabic_Egyptian", "ده_ملف_تجريبي_شامل_لدعم_اللهجة_المصرية_مع_أسماء_ملفات_طويلة_جدا_للاختبار.txt"),
@@ -82,11 +82,11 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Kurdish_Kurmanji", "ev_pelek_ceribandinê_ya_berfireh_e_ji_bo_piştgiriya_zimanê_kurdî_kurmancî_bi_navên_pelên_dirêj.txt"),
         ("Sindhi", "هي_سنڌي_ٻولي_جي_مدد_لاءِ_هڪ_جامع_ٽيسٽ_فائل_آهي_ڊگهن_فائل_نالن_سان.txt"),
         ("Uyghur", "بۇ_ئۇيغۇر_تىلىنى_قوللاش_ئۈچۈن_كەڭ_كۆلەملىك_سىناق_ھۆججىتى_ئۇزۇن_ھۆججەت_ناملىرى_بىلەن.txt"),
-        
+
         // Hebrew (RTL - Extended)
         ("Hebrew", "זהו_קובץ_בדיקה_מקיף_לתמיכה_בשפה_העברית_עם_שמות_קבצים_ארוכים_מאוד_לבדיקה_מלאה.txt"),
         ("Yiddish", "דאָס_איז_אַ_פֿולשטענדיקער_פּרוּוו_טעקע_פֿאַר_שטיצן_די_ייִדישע_שפּראַך_מיט_לאַנגע_טעקע_נעמען.txt"),
-        
+
         // CJK (Chinese, Japanese, Korean - Extended)
         ("Chinese_Simplified", "这是一个用于支持简体中文语言的综合测试文件具有很长的文件名称以进行完整测试.txt"),
         ("Chinese_Traditional", "這是一個用於支持繁體中文語言的綜合測試文件具有很長的文件名稱以進行完整測試.txt"),
@@ -99,7 +99,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Korean_Hangul", "이것은_한국어_언어_지원을_위한_포괄적인_테스트_파일이며_긴_파일_이름을_가지고_있습니다.txt"),
         ("Korean_Hanja", "此是韓國語言語支援爲之包括的試驗文書長文書名持者也.txt"),
         ("Korean_Mixed", "이것은_한국어와_한자를_混合한_包括的인_테스트_파일이며_긴_파일_이름을_가지고_있습니다.txt"),
-        
+
         // South Asian scripts (Extended)
         ("Hindi", "यह_हिंदी_भाषा_समर्थन_के_लिए_एक_व्यापक_परीक्षण_फ़ाइल_है_जिसमें_लंबे_फ़ाइल_नाम_हैं.txt"),
         ("Bengali", "এটি_বাংলা_ভাষা_সমর্থনের_জন্য_একটি_ব্যাপক_পরীক্ষা_ফাইল_যা_দীর্ঘ_ফাইলের_নাম_রয়েছে.txt"),
@@ -116,7 +116,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Assamese", "এইটো_অসমীয়া_ভাষা_সমৰ্থনৰ_বাবে_এটা_ব্যাপক_পৰীক্ষা_ফাইল_যাৰ_দীঘল_ফাইলৰ_নাম_আছে.txt"),
         ("Urdu_Devanagari", "یہ_اردو_زبان_کی_حمایت_کے_لیے_ایک_جامع_ٹیسٹ_فائل_ہے_جس_میں_لمبے_فائل_نام_ہیں.txt"),
         ("Sanskrit", "एतत्_संस्कृत_भाषा_समर्थनार्थं_एकं_व्यापकं_परीक्षण_सञ्चिका_अस्ति_यस्मिन्_दीर्घाणि_सञ्चिका_नामानि_सन्ति.txt"),
-        
+
         // Southeast Asian scripts (Extended)
         ("Thai", "นี่คือไฟล์ทดสอบที่ครอบคลุมสำหรับการสนับสนุนภาษาไทยด้วยชื่อไฟล์ที่ยาว.txt"),
         ("Lao", "ນີ້ແມ່ນໄຟລ໌ທົດສອບທີ່ສົມບູນສໍາລັບການສະຫນັບສະຫນູນພາສາລາວດ້ວຍຊື່ໄຟລ໌ທີ່ຍາວ.txt"),
@@ -128,7 +128,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Cebuano", "kini_usa_ka_bug_os_nga_test_file_alang_sa_suporta_sa_sinugbuanong_pinulongan_nga_adunay_taas_nga_ngalan.txt"),
         ("Malay", "ini_adalah_fail_ujian_menyeluruh_untuk_sokongan_bahasa_melayu_dengan_nama_fail_yang_panjang.txt"),
         ("Indonesian", "ini_adalah_file_uji_komprehensif_untuk_dukungan_bahasa_indonesia_dengan_nama_file_yang_panjang.txt"),
-        
+
         // Other scripts (Extended)
         ("Georgian", "ეს_არის_ყოვლისმომცველი_სატესტო_ფაილი_ქართული_ენის_მხარდაჭერისთვის_გრძელი_ფაილის_სახელებით.txt"),
         ("Armenian", "սա_համապարփակ_փորձարկման_ֆայլ_է_հայերեն_լեզվի_աջակցության_համար_երկար_ֆայլի_անուններով.txt"),
@@ -143,14 +143,14 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Hausa", "wannan_fayil_ne_na_gwaji_mai_cikakke_don_tallafin_harshen_hausa_mai_dogayen_sunayen_fayil.txt"),
         ("Yoruba", "eyi_jẹ_faili_idanwo_ti_o_ni_kikun_fun_atilẹyin_ede_yoruba_pẹlu_awọn_orukọ_faili_gigun_ẹọṣ.txt"),
         ("Igbo", "nke_a_bụ_faịlụ_nnwale_zuru_ezu_maka_nkwado_asụsụ_igbo_nwere_aha_faịlụ_ogologo.txt"),
-        
+
         // African and Middle Eastern languages (Additional)
         ("Berber_Tifinagh", "ⵜⴰⵏⵏⴰⵢⵜ_ⵏ_ⵓⵙⵏⵉⵔⵎ_ⵏ_ⵜⵓⵜⵍⴰⵢⵜ_ⵜⴰⵎⴰⵣⵉⵖⵜ_ⵙ_ⵉⵙⵎⴰⵡⵏ_ⵉⴳⴳⵓⵜⵏ.txt"),
         ("Coptic", "ⲡⲁⲓ_ⲡⲉ_ⲟⲩⲫⲁⲓⲗ_ⲛ_ⲧⲉⲥⲧ_ⲉϥϣⲟⲡ_ⲛ_ⲧⲁⲥⲡⲓⲣⲁ_ⲛ_ⲧⲙⲛⲧⲣⲙⲛⲕⲏⲙⲉ_ⲙⲛ_ϩⲁⲛⲣⲁⲛ_ⲉⲩⲟϣ.txt"),
         ("Syriac", "ܗܢܐ_ܗܘ_ܦܐܝܠܐ_ܕܒܘܚܪܢܐ_ܓܡܝܪܐ_ܠܬܡܟܬܐ_ܕܠܫܢܐ_ܣܘܪܝܝܐ_ܥܡ_ܫܡܗܐ_ܐܪܝܟܐ.txt"),
         ("Mandaic", "ࡀࡉࡃࡀ_ࡄࡅ_ࡐࡀࡉࡋࡀ_ࡃࡁࡅࡇࡓࡀࡍࡀ_ࡂࡌࡉࡓࡀ_ࡋࡕࡌࡊࡕࡀ_ࡃࡋࡔࡀࡍࡀ_ࡌࡀࡍࡃࡀࡉࡀ.txt"),
         ("Samaritan", "ࠀࠁࠂ_ࠄࠅ_ࠇࠈࠉࠊ_ࠌࠍࠎࠏ_ࠐࠑࠒࠓ_ࠔࠕࠖࠗ_࠘࠙ࠚࠛ_ࠜࠝࠞࠟ.txt"),
-        
+
         // Asian languages (Additional)
         ("Dzongkha", "འདི་ནི་རྫོང་ཁ་སྐད་ཡིག་གི་རྒྱབ་སྐྱོར་གྱི་དོན་དུ་ཡོངས་རྫོགས་ཀྱི་བརྟག་དཔྱད་ཡིག་ཆ་ཞིག་ཡིན.txt"),
         ("Meitei", "ꯃꯁꯤ_ꯃꯅꯤꯄꯨꯔꯤ_ꯂꯣꯟ_ꯁꯄꯣꯔꯠ_ꯇꯧꯅꯕꯒꯤꯗꯃꯛ_ꯃꯄꯨꯡ_ꯐꯥꯅꯥ_ꯇꯦꯁ_ꯐꯥꯏꯜ_ꯑꯃꯅꯤ.txt"),
@@ -160,7 +160,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Balinese", "ᬳᬶᬓᬶ_ᬩᬾᬃᬓᬲ᭄_ᬳᬸᬚᬶ_ᬮᬾᬂᬓᬧ᭄_ᬓᬂᬕᭀ_ᬤᬸᬓᬸᬗᬦ᭄_ᬩᬲ_ᬩᬮᬶ.txt"),
         ("Buginese", "ᨕᨗᨕᨗ_ᨅᨙᨑᨙᨀᨔ᨞_ᨕᨘᨍᨗ_ᨒᨙᨂᨀᨄ᨞_ᨀᨂᨁᨚ_ᨉᨘᨀᨘᨁᨙᨊ᨞_ᨅᨔ_ᨅᨘᨁᨗᨔ᨞.txt"),
         ("Rejang", "ꤰꥍꤰꥍ_ꤷꥍꤽꥍꤰꥍꤶ_ꤰꥍꤸꥍꤷꥍ_ꤻꥍꤾꥍꤰꥍꤰꥍꤿ_ꤰꥍꤾꥍꤱꥍꤚ_ꤷꥍꤸꥍꤰꥍꤸꥍꤾꥍꤾ.txt"),
-        
+
         // Special characters and symbols (Extended)
         ("Emoji_Extended", "comprehensive_test_file_with_emojis_😀😃😄😁😆😅🤣😂🙂🙃😉😊😇🥰😍🤩😘😗☺😚😙🥲😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬😈👿💀☠💩🤡👹👺👻👽👾🤖😺😸😹😻😼😽🙀😿😾🙈🙉🙊.txt"),
         ("Mixed_Emoji_Long", "这是一个包含多种语言和表情符号的综合测试文件_test_тест_😊😀🎉🔥💯✨🌟⭐🎯🎪🎨🎭🎬🎤🎧🎼🎹🎸🎺🎷🥁🎻📯🎲🎯🎳🎮🎰🎱🏀🏈⚾🥎🏐🏉🎾🥏🎳🏏🏑🏒🥍🏓🏸🥊🥋🥅⛳🏹🎣🤿🥽🎿🛷⛸🥌🎯🪀🪁.txt"),
@@ -175,7 +175,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Braille_Patterns", "braille_patterns_test_file_⠀⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏⡐⡑⡒⡓⡔⡕⡖⡗⡘⡙⡚⡛⡜⡝⡞⡟.txt"),
         ("Runic_Symbols", "runic_symbols_test_file_ᚠᚡᚢᚣᚤᚥᚦᚧᚨᚩᚪᚫᚬᚭᚮᚯᚰᚱᚲᚳᚴᚵᚶᚷᚸᚹᚺᚻᚼᚽᚾᚿᛀᛁᛂᛃᛄᛅᛆᛇᛈᛉᛊᛋᛌᛍᛎᛏᛐᛑᛒᛓᛔᛕᛖᛗᛘᛙᛚᛛᛜᛝᛞᛟᛠᛡᛢᛣᛤᛥᛦᛧᛨᛩᛪ᛫᛬᛭ᛮᛯᛰ.txt"),
         ("Ogham_Script", "ogham_script_test_file_᚛ᚁᚂᚃᚄᚅᚆᚇᚈᚉᚊᚋᚌᚍᚎᚏᚐᚑᚒᚓᚔᚕᚖᚗᚘᚙᚚ᚜_with_long_filename_for_testing.txt"),
-        
+
         // Indigenous and Native languages
         ("Cherokee", "ᏣᎳᎩ_ᎦᏬᏂᎯᏍᏗ_ᎠᏰᎵ_ᎠᏂᏣᎳᎩ_ᎠᏰᎵ_ᎠᏂᏣᎳᎩ_ᎦᏬᏂᎯᏍᏗ_ᎠᏂᏣᎳᎩ_ᎠᏰᎵ.txt"),
         ("Inuktitut", "ᐃᓄᒃᑎᑐᑦ_ᐅᖃᐅᓯᖅ_ᑐᑭᓯᒋᐊᕐᕕᒃ_ᐱᓕᕆᐊᖑᔪᖅ_ᑎᑎᕋᖅᓯᒪᔪᖅ_ᐊᑎᖃᖅᑐᖅ_ᑕᑭᓂᖃᖅᑐᖅ.txt"),
@@ -187,7 +187,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Samoan", "gagana_samoa_faʻataʻitaʻiga_faʻamatalaga_atoa_mo_le_lagolago_o_le_gagana_samoa_ma_igoa_umi.txt"),
         ("Tongan", "lea_fakatonga_fakamatala_fakaʻataʻatā_fakakakato_ki_he_tokoni_ʻo_e_lea_fakatonga_mo_e_hingoa_lōloa.txt"),
         ("Fijian", "vosa_vakaviti_ivola_ni_vakaraitaka_vakadodonu_me_baleta_na_veiqaravi_ni_vosa_vakaviti_kei_na_yacana_balavu.txt"),
-        
+
         // Constructed and Artificial languages
         ("Klingon", "tlhIngan_Hol_wIvmeH_De_nIDev_pat_nIvbogh_De_pat_nIvbogh_De_pat_nIvbogh_De_pat.txt"),
         ("Elvish_Tengwar", "ᴀ_ᴛᴇɴɢᴡᴀʀ_ᴛᴇsᴛ_ғɪʟᴇ_ғᴏʀ_ᴇʟᴠɪsʜ_sᴄʀɪᴘᴛ_sᴜᴘᴘᴏʀᴛ_ᴡɪᴛʜ_ʟᴏɴɢ_ғɪʟᴇɴᴀᴍᴇs.txt"),
@@ -198,7 +198,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Interlingua", "interlingua_file_de_test_comprehensive_pro_supporto_del_lingua_interlingua_con_nomines_longe.txt"),
         ("Ido", "ido_linguo_testo_arkivo_kompleta_por_suporto_di_ido_linguo_kun_longa_nomi.txt"),
         ("Volapük", "volapük_pük_proböm_ragiv_valik_pro_yuf_volapüka_pük_ko_nems_lunik.txt"),
-        
+
         // Edge cases (Extended)
         ("Spaces_Extended", "this is a comprehensive test file with many spaces in the filename for testing purposes.txt"),
         ("Multiple_Spaces_Extended", "file  with   multiple    spaces     between      words       for        testing.txt"),
@@ -211,19 +211,19 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("Numbers_Extended", "1234567890_0987654321_1234567890_0987654321_1234567890_0987654321_numbers.txt"),
         ("Mixed_Numbers_Extended", "file123test456data789info012mixed345numbers678in901filename234test567.txt"),
         ("Special_Chars_Extended", "file_with_special_chars_!@#$%^&()_+-=[]{}|;',._test_file_for_edge_cases.txt"),
-        
+
         // Long filenames (Extended to 80+ chars)
         ("Long_ASCII_Extended", "this_is_an_extremely_long_filename_that_tests_the_absolute_limits_of_filename_handling_in_various_operating_systems_and_filesystems_with_many_characters.txt"),
         ("Long_Unicode_Extended", "これは非常に長いファイル名でありシステムの制限をテストするための包括的なテストファイルです長い名前を持っています.txt"),
         ("Long_Mixed_Scripts", "это_очень_длинное_имя_файла_测试文件_test_file_with_mixed_scripts_ทดสอบ_परीक्षण_اختبار_δοκιμή.txt"),
-        
+
         // Combined scripts (Extended)
         ("Latin_Cyrillic_Extended", "comprehensive_test_file_комплексный_тестовый_файл_with_mixed_scripts_смешанные_скрипты.txt"),
         ("Latin_Arabic_Extended", "comprehensive_test_file_ملف_اختبار_شامل_with_mixed_scripts_نصوص_مختلطة.txt"),
         ("Latin_CJK_Extended", "comprehensive_test_file_综合测试文件_テストファイル_테스트_파일_with_mixed_scripts.txt"),
         ("Multi_Script_Extended", "test_тест_测试_テスト_परीक्षण_اختبار_δοκιμή_ทดสอบ_mixed_scripts_everywhere.txt"),
         ("All_Scripts_Mixed", "english_русский_中文_日本語_한국어_العربية_עברית_ελληνικά_ไทย_हिन्दी_বাংলা_தமிழ்_emoji_😀🎉.txt"),
-        
+
         // Case sensitivity tests (Extended)
         ("Uppercase_Extended", "THIS_IS_AN_UPPERCASE_FILENAME_FOR_TESTING_CASE_SENSITIVITY_IN_VARIOUS_SYSTEMS.TXT"),
         ("Lowercase_Extended", "this_is_a_lowercase_filename_for_testing_case_sensitivity_in_various_systems.txt"),
@@ -232,7 +232,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
         ("CamelCase_Extended", "ThisIsCamelCaseFileNameForTestingCaseSensitivityInVariousOperatingSystems.txt"),
         ("Snake_Case_Extended", "this_is_snake_case_file_name_for_testing_case_sensitivity_in_various_systems.txt"),
         ("Kebab_Case_Extended", "this-is-kebab-case-file-name-for-testing-case-sensitivity-in-various-systems.txt"),
-        
+
         // Historical and Ancient scripts
         ("Latin_Classical", "hic_est_lima_probationis_comprehensiva_pro_subsidio_linguae_latinae_cum_nominibus_longis.txt"),
         ("Old_English", "þis_is_a_comprehensive_test_file_for_old_english_language_support_with_long_names_æþðƿ.txt"),

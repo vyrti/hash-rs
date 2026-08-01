@@ -2,6 +2,9 @@
 
 High-performance cryptographic hash utility with SIMD optimization.
 
+The repository is a Cargo workspace containing the reusable `quichash-core`
+library and the `quichash` CLI package, which installs the `hash` executable.
+
 ## Features
 
 - **Algorithms**: MD5, SHA-1, SHA-2/3, BLAKE2/3, xxHash3/128
@@ -32,6 +35,32 @@ Or build from source:
 ```bash
 cargo build --release
 ```
+
+## Library
+
+Applications should depend on `quichash-core` rather than copying its source.
+The default feature set includes all algorithms, folder operations, parallel
+processing, memory mapping, and XZ manifests. A small BLAKE3-only build can use
+`default-features = false, features = ["blake3"]`.
+
+```rust
+use quichash_core::{Algorithm, HasherSet};
+
+let mut hashers = HasherSet::new(&[Algorithm::Blake3, Algorithm::Sha256])?;
+hashers.update(b"first chunk");
+hashers.update(b"second chunk");
+let digests = hashers.finalize();
+# Ok::<(), quichash_core::HashUtilityError>(())
+```
+
+For local trees, `scan_folder` returns a sorted multi-algorithm manifest plus
+deterministic folder digests. `verify_folder` verifies every stored digest.
+Both accept an `OperationObserver` for application-owned progress and
+cooperative cancellation.
+
+See the [complete `quichash-core` guide](crates/quichash-core/README.md) for the
+algorithm and feature matrix, byte/stream/file hashing, folder manifests,
+formats, verification, progress, cancellation, errors, and compatibility APIs.
 
 ## Quick Start
 

@@ -1,4 +1,4 @@
-// Benchmark module
+//! Hash algorithm benchmarks.
 // Measures hash algorithm performance
 
 use crate::error::HashUtilityError;
@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 /// Result of a benchmark run for a single algorithm
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BenchmarkResult {
+    /// Algorithm name measured by the benchmark.
     pub algorithm: String,
+    /// Computed throughput in mebibytes per second.
     pub throughput_mbps: f64,
 }
 
@@ -84,7 +86,10 @@ impl BenchmarkEngine {
         })
     }
 
-    /// Display benchmark results in a formatted table
+    /// Legacy display hook retained for API compatibility.
+    ///
+    /// The reusable core does not render terminal output. Consume the returned
+    /// [`BenchmarkResult`] values in the embedding application.
     pub fn display_results(&self, results: &[BenchmarkResult]) {
         if results.is_empty() {
             println!("No benchmark results to display.");
@@ -145,8 +150,7 @@ fn calculate_throughput(data_size_mb: usize, duration: Duration) -> f64 {
     }
 }
 
-// Re-export HashUtilityError as BenchmarkError for backward compatibility
-#[allow(dead_code)]
+/// Backward-compatible error name for benchmark operations.
 pub type BenchmarkError = HashUtilityError;
 
 #[cfg(test)]

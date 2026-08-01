@@ -1,12 +1,444 @@
-// Hash computation module
+//! Hash computation primitives and optimized file helpers.
 // Provides hash algorithm registry and computation logic
 
 use crate::error::HashUtilityError;
+#[cfg(feature = "mmap")]
 use memmap2::Mmap;
+use std::fmt;
 use std::fs::File;
 use std::io::IsTerminal;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+/// Stable identifier for every algorithm understood by QuicHash.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Algorithm {
+    /// MD5 with a 128-bit output.
+    Md5,
+    /// SHA-1 with a 160-bit output.
+    Sha1,
+    /// SHA-224 from the SHA-2 family.
+    Sha224,
+    /// SHA-256 from the SHA-2 family.
+    Sha256,
+    /// SHA-384 from the SHA-2 family.
+    Sha384,
+    /// SHA-512 from the SHA-2 family.
+    Sha512,
+    /// SHA3-224.
+    Sha3_224,
+    /// SHA3-256.
+    Sha3_256,
+    /// SHA3-384.
+    Sha3_384,
+    /// SHA3-512.
+    Sha3_512,
+    /// BLAKE2b with a 512-bit output.
+    Blake2b512,
+    /// BLAKE2s with a 256-bit output.
+    Blake2s256,
+    /// BLAKE3 with its standard 256-bit output.
+    Blake3,
+    /// XXH3 with a 64-bit output.
+    Xxh3,
+    /// XXH3 with a 128-bit output.
+    Xxh128,
+}
+
+impl Algorithm {
+    /// Every algorithm identifier understood by this version of the crate.
+    ///
+    /// The array includes algorithms that may have been disabled through Cargo
+    /// features. Use [`Algorithm::is_available`] to filter it.
+    pub const ALL: [Self; 15] = [
+        Self::Md5,
+        Self::Sha1,
+        Self::Sha224,
+        Self::Sha256,
+        Self::Sha384,
+        Self::Sha512,
+        Self::Sha3_224,
+        Self::Sha3_256,
+        Self::Sha3_384,
+        Self::Sha3_512,
+        Self::Blake2b512,
+        Self::Blake2s256,
+        Self::Blake3,
+        Self::Xxh3,
+        Self::Xxh128,
+    ];
+
+    /// Return the stable lowercase name used in manifests and string parsing.
+    pub const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Md5 => "md5",
+            Self::Sha1 => "sha1",
+            Self::Sha224 => "sha224",
+            Self::Sha256 => "sha256",
+            Self::Sha384 => "sha384",
+            Self::Sha512 => "sha512",
+            Self::Sha3_224 => "sha3-224",
+            Self::Sha3_256 => "sha3-256",
+            Self::Sha3_384 => "sha3-384",
+            Self::Sha3_512 => "sha3-512",
+            Self::Blake2b512 => "blake2b-512",
+            Self::Blake2s256 => "blake2s-256",
+            Self::Blake3 => "blake3",
+            Self::Xxh3 => "xxh3",
+            Self::Xxh128 => "xxh128",
+        }
+    }
+
+    /// Return a human-readable algorithm name.
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Md5 => "MD5",
+            Self::Sha1 => "SHA1",
+            Self::Sha224 => "SHA-224",
+            Self::Sha256 => "SHA-256",
+            Self::Sha384 => "SHA-384",
+            Self::Sha512 => "SHA-512",
+            Self::Sha3_224 => "SHA3-224",
+            Self::Sha3_256 => "SHA3-256",
+            Self::Sha3_384 => "SHA3-384",
+            Self::Sha3_512 => "SHA3-512",
+            Self::Blake2b512 => "BLAKE2b-512",
+            Self::Blake2s256 => "BLAKE2s-256",
+            Self::Blake3 => "BLAKE3",
+            Self::Xxh3 => "XXH3",
+            Self::Xxh128 => "XXH128",
+        }
+    }
+
+    /// Return the digest size in bytes.
+    pub const fn output_size(self) -> usize {
+        match self {
+            Self::Md5 | Self::Xxh128 => 16,
+            Self::Sha1 => 20,
+            Self::Sha224 | Self::Sha3_224 => 28,
+            Self::Sha256 | Self::Sha3_256 | Self::Blake2s256 | Self::Blake3 => 32,
+            Self::Sha384 | Self::Sha3_384 => 48,
+            Self::Sha512 | Self::Sha3_512 | Self::Blake2b512 => 64,
+            Self::Xxh3 => 8,
+        }
+    }
+
+    /// Return the Cargo feature that provides this implementation.
+    pub const fn required_feature(self) -> &'static str {
+        match self {
+            Self::Md5 => "md5",
+            Self::Sha1 => "sha1",
+            Self::Sha224 | Self::Sha256 | Self::Sha384 | Self::Sha512 => "sha2",
+            Self::Sha3_224 | Self::Sha3_256 | Self::Sha3_384 | Self::Sha3_512 => "sha3",
+            Self::Blake2b512 | Self::Blake2s256 => "blake2",
+            Self::Blake3 => "blake3",
+            Self::Xxh3 | Self::Xxh128 => "xxhash",
+        }
+    }
+
+    /// Return whether this algorithm was compiled into the current build.
+    pub const fn is_available(self) -> bool {
+        match self {
+            Self::Md5 => cfg!(feature = "md5"),
+            Self::Sha1 => cfg!(feature = "sha1"),
+            Self::Sha224 | Self::Sha256 | Self::Sha384 | Self::Sha512 => cfg!(feature = "sha2"),
+            Self::Sha3_224 | Self::Sha3_256 | Self::Sha3_384 | Self::Sha3_512 => {
+                cfg!(feature = "sha3")
+            }
+            Self::Blake2b512 | Self::Blake2s256 => cfg!(feature = "blake2"),
+            Self::Blake3 => cfg!(feature = "blake3"),
+            Self::Xxh3 | Self::Xxh128 => cfg!(feature = "xxhash"),
+        }
+    }
+
+    /// Construct a fresh streaming hasher for this algorithm.
+    ///
+    /// Returns [`HashUtilityError::AlgorithmUnavailable`] when the corresponding
+    /// Cargo feature is disabled.
+    pub fn hasher(self) -> Result<Box<dyn Hasher>, HashUtilityError> {
+        HashRegistry::get_hasher(self.canonical_name())
+    }
+}
+
+impl fmt::Display for Algorithm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.canonical_name())
+    }
+}
+
+impl FromStr for Algorithm {
+    type Err = HashUtilityError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "md5" => Ok(Self::Md5),
+            "sha1" | "sha-1" => Ok(Self::Sha1),
+            "sha224" | "sha-224" => Ok(Self::Sha224),
+            "sha256" | "sha-256" => Ok(Self::Sha256),
+            "sha384" | "sha-384" => Ok(Self::Sha384),
+            "sha512" | "sha-512" => Ok(Self::Sha512),
+            "sha3-224" => Ok(Self::Sha3_224),
+            "sha3-256" => Ok(Self::Sha3_256),
+            "sha3-384" => Ok(Self::Sha3_384),
+            "sha3-512" => Ok(Self::Sha3_512),
+            "blake2b" | "blake2b-512" => Ok(Self::Blake2b512),
+            "blake2s" | "blake2s-256" => Ok(Self::Blake2s256),
+            "blake3" => Ok(Self::Blake3),
+            "xxh3" => Ok(Self::Xxh3),
+            "xxh128" => Ok(Self::Xxh128),
+            _ => Err(HashUtilityError::UnsupportedAlgorithm {
+                algorithm: value.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+/// Selects complete or sampled file hashing.
+pub enum HashMode {
+    /// Hash the complete contents of the file.
+    #[default]
+    Full,
+    /// Hash three fixed-size samples of a large file for quick identification.
+    Sampled,
+}
+
+/// A validated binary digest coupled to its algorithm.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct DigestValue {
+    /// Algorithm that produced the digest.
+    pub algorithm: Algorithm,
+    pub(crate) bytes: Vec<u8>,
+}
+
+impl DigestValue {
+    /// Validate raw digest bytes and associate them with `algorithm`.
+    ///
+    /// The byte length must equal [`Algorithm::output_size`].
+    pub fn from_bytes(algorithm: Algorithm, bytes: Vec<u8>) -> Result<Self, HashUtilityError> {
+        if bytes.len() != algorithm.output_size() {
+            return Err(HashUtilityError::InvalidDigest {
+                algorithm: algorithm.to_string(),
+                reason: format!(
+                    "expected {} bytes, found {}",
+                    algorithm.output_size(),
+                    bytes.len()
+                ),
+            });
+        }
+        Ok(Self { algorithm, bytes })
+    }
+
+    /// Decode and validate a hexadecimal digest for `algorithm`.
+    pub fn from_hex(algorithm: Algorithm, value: &str) -> Result<Self, HashUtilityError> {
+        if value.len() != algorithm.output_size() * 2 {
+            return Err(HashUtilityError::InvalidDigest {
+                algorithm: algorithm.to_string(),
+                reason: format!(
+                    "expected {} hexadecimal characters, found {}",
+                    algorithm.output_size() * 2,
+                    value.len()
+                ),
+            });
+        }
+        let bytes = value
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let text = std::str::from_utf8(pair).expect("hexadecimal text is ASCII");
+                u8::from_str_radix(text, 16).map_err(|_| HashUtilityError::InvalidDigest {
+                    algorithm: algorithm.to_string(),
+                    reason: "digest contains a non-hexadecimal character".to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { algorithm, bytes })
+    }
+
+    /// Encode the digest as lowercase hexadecimal text.
+    pub fn to_hex(&self) -> String {
+        bytes_to_hex(&self.bytes)
+    }
+
+    /// Borrow the validated binary digest.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// A collection of streaming hashers updated from the same byte stream.
+pub struct HasherSet {
+    hashers: Vec<(Algorithm, Box<dyn Hasher>)>,
+}
+
+impl HasherSet {
+    /// Construct one streaming hasher for each requested algorithm.
+    ///
+    /// Hashers and final results preserve the order of `algorithms`. Duplicate
+    /// algorithms are permitted and produce duplicate results.
+    pub fn new(algorithms: &[Algorithm]) -> Result<Self, HashUtilityError> {
+        let mut hashers = Vec::with_capacity(algorithms.len());
+        for &algorithm in algorithms {
+            hashers.push((algorithm, algorithm.hasher()?));
+        }
+        Ok(Self { hashers })
+    }
+
+    /// Feed the same byte chunk to every hasher in the set.
+    pub fn update(&mut self, data: &[u8]) {
+        for (_, hasher) in &mut self.hashers {
+            hasher.update(data);
+        }
+    }
+
+    /// Consume the set and return its digests in requested order.
+    pub fn finalize(self) -> Vec<DigestValue> {
+        self.hashers
+            .into_iter()
+            .map(|(algorithm, hasher)| DigestValue {
+                algorithm,
+                bytes: hasher.finalize(),
+            })
+            .collect()
+    }
+}
+
+/// Hash an in-memory byte slice with one or more algorithms.
+///
+/// The input is presented to every algorithm once, and results preserve the
+/// requested order.
+pub fn hash_bytes(
+    data: &[u8],
+    algorithms: &[Algorithm],
+) -> Result<Vec<DigestValue>, HashUtilityError> {
+    let mut hashers = HasherSet::new(algorithms)?;
+    hashers.update(data);
+    Ok(hashers.finalize())
+}
+
+/// Stream a reader through one or more algorithms.
+///
+/// This convenience function uses a 1 MiB internal buffer and no observer.
+pub fn hash_reader(
+    mut reader: impl Read,
+    algorithms: &[Algorithm],
+) -> Result<Vec<DigestValue>, HashUtilityError> {
+    hash_reader_observed(&mut reader, algorithms, &crate::operation::NoopObserver)
+}
+
+/// Stream a reader while reporting byte progress and checking cancellation.
+///
+/// Progress has no known total because a generic reader does not expose its
+/// length. The observer is checked before every read.
+pub fn hash_reader_observed(
+    mut reader: impl Read,
+    algorithms: &[Algorithm],
+    observer: &dyn crate::operation::OperationObserver,
+) -> Result<Vec<DigestValue>, HashUtilityError> {
+    let mut hashers = HasherSet::new(algorithms)?;
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    let mut bytes_processed = 0_u64;
+    loop {
+        if observer.is_cancelled() {
+            return Err(HashUtilityError::Cancelled);
+        }
+        let amount = reader.read(&mut buffer)?;
+        if amount == 0 {
+            break;
+        }
+        hashers.update(&buffer[..amount]);
+        bytes_processed += amount as u64;
+        observer.on_progress(&crate::operation::ProgressEvent {
+            phase: crate::operation::ProgressPhase::Hashing,
+            completed: bytes_processed,
+            total: None,
+            bytes_processed,
+            path: None,
+        });
+    }
+    Ok(hashers.finalize())
+}
+
+/// Hash the complete contents of a file with one or more algorithms.
+///
+/// A single BLAKE3 digest uses its memory-mapped parallel implementation when
+/// the `blake3`, `parallel`, and `mmap` features are enabled.
+pub fn hash_file(
+    path: &Path,
+    algorithms: &[Algorithm],
+) -> Result<Vec<DigestValue>, HashUtilityError> {
+    #[cfg(all(feature = "blake3", feature = "parallel", feature = "mmap"))]
+    if algorithms == [Algorithm::Blake3] {
+        let mut hasher = Blake3Hasher::new();
+        hasher.update_mmap_rayon(path).map_err(|error| {
+            HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+        })?;
+        return Ok(vec![DigestValue {
+            algorithm: Algorithm::Blake3,
+            bytes: hasher.finalize().as_bytes().to_vec(),
+        }]);
+    }
+    let file = File::open(path).map_err(|error| {
+        HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+    })?;
+    hash_reader(file, algorithms)
+}
+
+/// Hash a file in full or sampled mode.
+///
+/// Files smaller than the sampling threshold are read completely even in
+/// [`HashMode::Sampled`]. Larger files hash 100 MiB from the beginning, middle,
+/// and end. Sampled hashes are for identification rather than complete
+/// integrity verification.
+pub fn hash_file_mode(
+    path: &Path,
+    algorithms: &[Algorithm],
+    mode: HashMode,
+) -> Result<Vec<DigestValue>, HashUtilityError> {
+    if mode == HashMode::Full {
+        return hash_file(path, algorithms);
+    }
+    let mut file = File::open(path).map_err(|error| {
+        HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+    })?;
+    let size = file
+        .metadata()
+        .map_err(|error| {
+            HashUtilityError::from_io_error(error, "reading metadata", Some(path.to_owned()))
+        })?
+        .len();
+    if size < FAST_MODE_THRESHOLD {
+        return hash_reader(file, algorithms);
+    }
+    let mut hashers = HasherSet::new(algorithms)?;
+    for start in [
+        0,
+        (size / 2).saturating_sub(FAST_MODE_SAMPLE_SIZE / 2),
+        size.saturating_sub(FAST_MODE_SAMPLE_SIZE),
+    ] {
+        file.seek(std::io::SeekFrom::Start(start))
+            .map_err(|error| {
+                HashUtilityError::from_io_error(error, "seeking", Some(path.to_owned()))
+            })?;
+        let mut remaining = FAST_MODE_SAMPLE_SIZE;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        while remaining > 0 {
+            let wanted = remaining.min(buffer.len() as u64) as usize;
+            let amount = file.read(&mut buffer[..wanted]).map_err(|error| {
+                HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+            })?;
+            if amount == 0 {
+                break;
+            }
+            hashers.update(&buffer[..amount]);
+            remaining -= amount as u64;
+        }
+    }
+    Ok(hashers.finalize())
+}
 
 /// Trait for hash algorithm implementations
 pub trait Hasher: Send {
@@ -17,33 +449,45 @@ pub trait Hasher: Send {
     fn finalize(self: Box<Self>) -> Vec<u8>;
 
     /// Get the output size in bytes
-    #[allow(dead_code)]
     fn output_size(&self) -> usize;
 }
 
 /// Information about a hash algorithm
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AlgorithmInfo {
+    /// Human-readable algorithm name.
     pub name: String,
+    /// Digest size in bits.
     pub output_bits: usize,
+    /// Whether the registry classifies the algorithm as post-quantum resistant.
     pub post_quantum: bool,
+    /// Whether the algorithm is intended to provide cryptographic hashing.
     pub cryptographic: bool,
 }
 
 // Re-export HashUtilityError as HashError for backward compatibility
+/// Backward-compatible name for [`HashUtilityError`].
 pub type HashError = HashUtilityError;
 
 // Wrapper types for hash algorithms
+#[cfg(feature = "blake2")]
 use blake2::{Blake2b512, Blake2s256, Digest as Blake2Digest};
+#[cfg(feature = "blake3")]
 use blake3::Hasher as Blake3Hasher;
+#[cfg(feature = "md5")]
 use md5::{Digest as Md5Digest, Md5};
+#[cfg(feature = "sha1")]
 use sha1::{Digest as Sha1Digest, Sha1};
+#[cfg(feature = "sha2")]
 use sha2::{Digest as Sha2Digest, Sha224, Sha256, Sha384, Sha512};
+#[cfg(feature = "sha3")]
 use sha3::{Digest as Sha3Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512};
 
-// MD5 wrapper
+/// Streaming MD5 implementation used by the compatibility registry.
+#[cfg(feature = "md5")]
 pub struct Md5Wrapper(Md5);
 
+#[cfg(feature = "md5")]
 impl Hasher for Md5Wrapper {
     fn update(&mut self, data: &[u8]) {
         Md5Digest::update(&mut self.0, data);
@@ -59,8 +503,11 @@ impl Hasher for Md5Wrapper {
 }
 
 // SHA1 wrapper
+/// Streaming SHA-1 implementation used by the compatibility registry.
+#[cfg(feature = "sha1")]
 pub struct Sha1Wrapper(Sha1);
 
+#[cfg(feature = "sha1")]
 impl Hasher for Sha1Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha1Digest::update(&mut self.0, data);
@@ -76,8 +523,11 @@ impl Hasher for Sha1Wrapper {
 }
 
 // SHA-224 wrapper
+/// Streaming SHA-224 implementation used by the compatibility registry.
+#[cfg(feature = "sha2")]
 pub struct Sha224Wrapper(Sha224);
 
+#[cfg(feature = "sha2")]
 impl Hasher for Sha224Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha2Digest::update(&mut self.0, data);
@@ -93,8 +543,11 @@ impl Hasher for Sha224Wrapper {
 }
 
 // SHA-256 wrapper
+/// Streaming SHA-256 implementation used by the compatibility registry.
+#[cfg(feature = "sha2")]
 pub struct Sha256Wrapper(Sha256);
 
+#[cfg(feature = "sha2")]
 impl Hasher for Sha256Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha2Digest::update(&mut self.0, data);
@@ -110,8 +563,11 @@ impl Hasher for Sha256Wrapper {
 }
 
 // SHA-384 wrapper
+/// Streaming SHA-384 implementation used by the compatibility registry.
+#[cfg(feature = "sha2")]
 pub struct Sha384Wrapper(Sha384);
 
+#[cfg(feature = "sha2")]
 impl Hasher for Sha384Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha2Digest::update(&mut self.0, data);
@@ -127,8 +583,11 @@ impl Hasher for Sha384Wrapper {
 }
 
 // SHA-512 wrapper
+/// Streaming SHA-512 implementation used by the compatibility registry.
+#[cfg(feature = "sha2")]
 pub struct Sha512Wrapper(Sha512);
 
+#[cfg(feature = "sha2")]
 impl Hasher for Sha512Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha2Digest::update(&mut self.0, data);
@@ -144,8 +603,11 @@ impl Hasher for Sha512Wrapper {
 }
 
 // SHA3-224 wrapper
+/// Streaming SHA3-224 implementation used by the compatibility registry.
+#[cfg(feature = "sha3")]
 pub struct Sha3_224Wrapper(Sha3_224);
 
+#[cfg(feature = "sha3")]
 impl Hasher for Sha3_224Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha3Digest::update(&mut self.0, data);
@@ -161,8 +623,11 @@ impl Hasher for Sha3_224Wrapper {
 }
 
 // SHA3-256 wrapper
+/// Streaming SHA3-256 implementation used by the compatibility registry.
+#[cfg(feature = "sha3")]
 pub struct Sha3_256Wrapper(Sha3_256);
 
+#[cfg(feature = "sha3")]
 impl Hasher for Sha3_256Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha3Digest::update(&mut self.0, data);
@@ -178,8 +643,11 @@ impl Hasher for Sha3_256Wrapper {
 }
 
 // SHA3-384 wrapper
+/// Streaming SHA3-384 implementation used by the compatibility registry.
+#[cfg(feature = "sha3")]
 pub struct Sha3_384Wrapper(Sha3_384);
 
+#[cfg(feature = "sha3")]
 impl Hasher for Sha3_384Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha3Digest::update(&mut self.0, data);
@@ -195,8 +663,11 @@ impl Hasher for Sha3_384Wrapper {
 }
 
 // SHA3-512 wrapper
+/// Streaming SHA3-512 implementation used by the compatibility registry.
+#[cfg(feature = "sha3")]
 pub struct Sha3_512Wrapper(Sha3_512);
 
+#[cfg(feature = "sha3")]
 impl Hasher for Sha3_512Wrapper {
     fn update(&mut self, data: &[u8]) {
         Sha3Digest::update(&mut self.0, data);
@@ -212,8 +683,11 @@ impl Hasher for Sha3_512Wrapper {
 }
 
 // BLAKE2b wrapper
+/// Streaming BLAKE2b-512 implementation used by the compatibility registry.
+#[cfg(feature = "blake2")]
 pub struct Blake2b512Wrapper(Blake2b512);
 
+#[cfg(feature = "blake2")]
 impl Hasher for Blake2b512Wrapper {
     fn update(&mut self, data: &[u8]) {
         Blake2Digest::update(&mut self.0, data);
@@ -229,8 +703,11 @@ impl Hasher for Blake2b512Wrapper {
 }
 
 // BLAKE2s wrapper
+/// Streaming BLAKE2s-256 implementation used by the compatibility registry.
+#[cfg(feature = "blake2")]
 pub struct Blake2s256Wrapper(Blake2s256);
 
+#[cfg(feature = "blake2")]
 impl Hasher for Blake2s256Wrapper {
     fn update(&mut self, data: &[u8]) {
         Blake2Digest::update(&mut self.0, data);
@@ -254,14 +731,14 @@ impl Hasher for Blake2s256Wrapper {
 // The blake3 crate's update_rayon() method is always available when the rayon
 // feature is enabled, and it automatically parallelizes the hashing across
 // multiple CPU cores for better throughput.
+/// Streaming BLAKE3 implementation used by the compatibility registry.
+#[cfg(feature = "blake3")]
 pub struct Blake3Wrapper(Blake3Hasher);
 
+#[cfg(feature = "blake3")]
 impl Hasher for Blake3Wrapper {
     fn update(&mut self, data: &[u8]) {
-        // The blake3 crate with rayon feature enabled provides update_rayon()
-        // which automatically uses multi-threaded hashing for large inputs.
-        // Since we've enabled the rayon feature in Cargo.toml, we can use it directly.
-        self.0.update_rayon(data);
+        self.0.update(data);
     }
 
     fn finalize(self: Box<Self>) -> Vec<u8> {
@@ -274,10 +751,14 @@ impl Hasher for Blake3Wrapper {
 }
 
 // XXH3 wrapper (64-bit non-cryptographic hash)
+#[cfg(feature = "xxhash")]
 use xxhash_rust::xxh3::Xxh3 as Xxh3Hasher;
 
+/// Streaming XXH3-64 implementation used by the compatibility registry.
+#[cfg(feature = "xxhash")]
 pub struct Xxh3Wrapper(Xxh3Hasher);
 
+#[cfg(feature = "xxhash")]
 impl Hasher for Xxh3Wrapper {
     fn update(&mut self, data: &[u8]) {
         self.0.update(data);
@@ -294,10 +775,14 @@ impl Hasher for Xxh3Wrapper {
 }
 
 // XXH128 wrapper (128-bit non-cryptographic hash)
+#[cfg(feature = "xxhash")]
 use xxhash_rust::xxh3::Xxh3 as Xxh3HasherBase;
 
+/// Streaming XXH3-128 implementation used by the compatibility registry.
+#[cfg(feature = "xxhash")]
 pub struct Xxh128Wrapper(Xxh3HasherBase);
 
+#[cfg(feature = "xxhash")]
 impl Hasher for Xxh128Wrapper {
     fn update(&mut self, data: &[u8]) {
         self.0.update(data);
@@ -319,128 +804,73 @@ pub struct HashRegistry;
 impl HashRegistry {
     /// Get a hasher instance for the specified algorithm
     pub fn get_hasher(algorithm: &str) -> Result<Box<dyn Hasher>, HashError> {
-        let alg_lower = algorithm.to_lowercase();
-
-        match alg_lower.as_str() {
-            "md5" => Ok(Box::new(Md5Wrapper(Md5Digest::new()))),
-            "sha1" => Ok(Box::new(Sha1Wrapper(Sha1Digest::new()))),
-            "sha224" | "sha-224" => Ok(Box::new(Sha224Wrapper(Sha2Digest::new()))),
-            "sha256" | "sha-256" => Ok(Box::new(Sha256Wrapper(Sha2Digest::new()))),
-            "sha384" | "sha-384" => Ok(Box::new(Sha384Wrapper(Sha2Digest::new()))),
-            "sha512" | "sha-512" => Ok(Box::new(Sha512Wrapper(Sha2Digest::new()))),
-            "sha3-224" => Ok(Box::new(Sha3_224Wrapper(Sha3Digest::new()))),
-            "sha3-256" => Ok(Box::new(Sha3_256Wrapper(Sha3Digest::new()))),
-            "sha3-384" => Ok(Box::new(Sha3_384Wrapper(Sha3Digest::new()))),
-            "sha3-512" => Ok(Box::new(Sha3_512Wrapper(Sha3Digest::new()))),
-            "blake2b" | "blake2b-512" => Ok(Box::new(Blake2b512Wrapper(Blake2Digest::new()))),
-            "blake2s" | "blake2s-256" => Ok(Box::new(Blake2s256Wrapper(Blake2Digest::new()))),
-            "blake3" => Ok(Box::new(Blake3Wrapper(Blake3Hasher::new()))),
-            "xxh3" => Ok(Box::new(Xxh3Wrapper(Xxh3Hasher::new()))),
-            "xxh128" => Ok(Box::new(Xxh128Wrapper(Xxh3HasherBase::new()))),
-            _ => Err(HashUtilityError::UnsupportedAlgorithm {
-                algorithm: algorithm.to_string(),
+        let parsed = Algorithm::from_str(algorithm)?;
+        if !parsed.is_available() {
+            return Err(HashUtilityError::AlgorithmUnavailable {
+                algorithm: parsed.to_string(),
+                feature: parsed.required_feature(),
+            });
+        }
+        #[allow(unreachable_patterns)]
+        match parsed {
+            #[cfg(feature = "md5")]
+            Algorithm::Md5 => Ok(Box::new(Md5Wrapper(Md5Digest::new()))),
+            #[cfg(feature = "sha1")]
+            Algorithm::Sha1 => Ok(Box::new(Sha1Wrapper(Sha1Digest::new()))),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha224 => Ok(Box::new(Sha224Wrapper(Sha2Digest::new()))),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha256 => Ok(Box::new(Sha256Wrapper(Sha2Digest::new()))),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha384 => Ok(Box::new(Sha384Wrapper(Sha2Digest::new()))),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha512 => Ok(Box::new(Sha512Wrapper(Sha2Digest::new()))),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_224 => Ok(Box::new(Sha3_224Wrapper(Sha3Digest::new()))),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_256 => Ok(Box::new(Sha3_256Wrapper(Sha3Digest::new()))),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_384 => Ok(Box::new(Sha3_384Wrapper(Sha3Digest::new()))),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_512 => Ok(Box::new(Sha3_512Wrapper(Sha3Digest::new()))),
+            #[cfg(feature = "blake2")]
+            Algorithm::Blake2b512 => Ok(Box::new(Blake2b512Wrapper(Blake2Digest::new()))),
+            #[cfg(feature = "blake2")]
+            Algorithm::Blake2s256 => Ok(Box::new(Blake2s256Wrapper(Blake2Digest::new()))),
+            #[cfg(feature = "blake3")]
+            Algorithm::Blake3 => Ok(Box::new(Blake3Wrapper(Blake3Hasher::new()))),
+            #[cfg(feature = "xxhash")]
+            Algorithm::Xxh3 => Ok(Box::new(Xxh3Wrapper(Xxh3Hasher::new()))),
+            #[cfg(feature = "xxhash")]
+            Algorithm::Xxh128 => Ok(Box::new(Xxh128Wrapper(Xxh3HasherBase::new()))),
+            unavailable => Err(HashUtilityError::AlgorithmUnavailable {
+                algorithm: unavailable.to_string(),
+                feature: unavailable.required_feature(),
             }),
         }
     }
 
     /// List all available hash algorithms
     pub fn list_algorithms() -> Vec<AlgorithmInfo> {
-        vec![
-            AlgorithmInfo {
-                name: "MD5".to_string(),
-                output_bits: 128,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA1".to_string(),
-                output_bits: 160,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA-224".to_string(),
-                output_bits: 224,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA-256".to_string(),
-                output_bits: 256,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA-384".to_string(),
-                output_bits: 384,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA-512".to_string(),
-                output_bits: 512,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA3-224".to_string(),
-                output_bits: 224,
-                post_quantum: true,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA3-256".to_string(),
-                output_bits: 256,
-                post_quantum: true,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA3-384".to_string(),
-                output_bits: 384,
-                post_quantum: true,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "SHA3-512".to_string(),
-                output_bits: 512,
-                post_quantum: true,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "BLAKE2b-512".to_string(),
-                output_bits: 512,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "BLAKE2s-256".to_string(),
-                output_bits: 256,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "BLAKE3".to_string(),
-                output_bits: 256,
-                post_quantum: false,
-                cryptographic: true,
-            },
-            AlgorithmInfo {
-                name: "XXH3".to_string(),
-                output_bits: 64,
-                post_quantum: false,
-                cryptographic: false,
-            },
-            AlgorithmInfo {
-                name: "XXH128".to_string(),
-                output_bits: 128,
-                post_quantum: false,
-                cryptographic: false,
-            },
-        ]
+        Algorithm::ALL
+            .into_iter()
+            .filter(|algorithm| algorithm.is_available())
+            .map(|algorithm| AlgorithmInfo {
+                name: algorithm.display_name().to_owned(),
+                output_bits: algorithm.output_size() * 8,
+                post_quantum: matches!(
+                    algorithm,
+                    Algorithm::Sha3_224
+                        | Algorithm::Sha3_256
+                        | Algorithm::Sha3_384
+                        | Algorithm::Sha3_512
+                ),
+                cryptographic: !matches!(algorithm, Algorithm::Xxh3 | Algorithm::Xxh128),
+            })
+            .collect()
     }
 
     /// Check if an algorithm is post-quantum resistant
-    #[allow(dead_code)]
     pub fn is_post_quantum(algorithm: &str) -> bool {
         let alg_lower = algorithm.to_lowercase();
 
@@ -452,8 +882,11 @@ impl HashRegistry {
 /// Result of a hash computation
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HashResult {
+    /// Algorithm name supplied to the compatibility API.
     pub algorithm: String,
+    /// Lowercase hexadecimal digest.
     pub hash: String, // hex-encoded
+    /// Source path, or a synthetic marker such as `<text>` or `<stdin>`.
     pub file_path: PathBuf,
 }
 
@@ -467,6 +900,7 @@ const FAST_MODE_SAMPLE_SIZE: u64 = 100 * 1024 * 1024; // 100MB
 const FAST_MODE_THRESHOLD: u64 = 3 * FAST_MODE_SAMPLE_SIZE; // 300MB
 
 // Constants for memory mapping
+#[cfg(feature = "mmap")]
 const MMAP_THRESHOLD: u64 = 2 * 1024 * 1024 * 1024; // 2GB
 
 // Constants for progress bar
@@ -482,13 +916,11 @@ impl HashComputer {
     }
 
     /// Create a new HashComputer with custom buffer size
-    #[allow(dead_code)]
     pub fn with_buffer_size(buffer_size: usize) -> Self {
         Self { buffer_size }
     }
 
     /// Compute hash from text string
-    #[allow(dead_code)]
     pub fn compute_hash_text(&self, text: &str, algorithm: &str) -> Result<HashResult, HashError> {
         // Get hasher for the specified algorithm
         let mut hasher = HashRegistry::get_hasher(algorithm)?;
@@ -543,7 +975,6 @@ impl HashComputer {
     }
 
     /// Compute hash from stdin using streaming I/O
-    #[allow(dead_code)]
     pub fn compute_hash_stdin(&self, algorithm: &str) -> Result<HashResult, HashError> {
         use std::io::{stdin, Read};
 
@@ -602,6 +1033,14 @@ impl HashComputer {
         algorithm: &str,
         show_progress: bool,
     ) -> Result<HashResult, HashError> {
+        if !show_progress && Algorithm::from_str(algorithm).ok() == Some(Algorithm::Blake3) {
+            let digest = hash_file(path, &[Algorithm::Blake3])?.remove(0);
+            return Ok(HashResult {
+                algorithm: algorithm.to_owned(),
+                hash: digest.to_hex(),
+                file_path: path.to_owned(),
+            });
+        }
         // Get hasher for the specified algorithm
         let mut hasher = HashRegistry::get_hasher(algorithm)?;
 
@@ -621,26 +1060,42 @@ impl HashComputer {
         let should_show_progress =
             show_progress && file_size > PROGRESS_BAR_THRESHOLD && std::io::stdout().is_terminal();
 
-        // Use memory mapping for files smaller than 2GB
-        if file_size > 0 && file_size < MMAP_THRESHOLD {
-            // Try to memory map the file
-            match unsafe { Mmap::map(&file) } {
-                Ok(mmap) => {
-                    // Hash the entire mapped file in one go
-                    // Note: Progress bar not shown for mmap as it's very fast
-                    hasher.update(&mmap[..]);
-                }
-                Err(_) => {
-                    // Fall back to buffered reading if mmap fails
-                    if should_show_progress {
-                        self.hash_with_buffered_io_progress(&mut hasher, file, path, file_size)?;
-                    } else {
-                        self.hash_with_buffered_io(&mut hasher, file, path)?;
+        // Use memory mapping for files smaller than 2GB when requested.
+        #[cfg(feature = "mmap")]
+        {
+            if file_size > 0 && file_size < MMAP_THRESHOLD {
+                // Try to memory map the file
+                match unsafe { Mmap::map(&file) } {
+                    Ok(mmap) => {
+                        // Hash the entire mapped file in one go
+                        // Note: Progress bar not shown for mmap as it's very fast
+                        hasher.update(&mmap[..]);
+                    }
+                    Err(_) => {
+                        // Fall back to buffered reading if mmap fails
+                        if should_show_progress {
+                            self.hash_with_buffered_io_progress(
+                                &mut hasher,
+                                file,
+                                path,
+                                file_size,
+                            )?;
+                        } else {
+                            self.hash_with_buffered_io(&mut hasher, file, path)?;
+                        }
                     }
                 }
+            } else {
+                // Use buffered reading for large files (>2GB) or empty files
+                if should_show_progress {
+                    self.hash_with_buffered_io_progress(&mut hasher, file, path, file_size)?;
+                } else {
+                    self.hash_with_buffered_io(&mut hasher, file, path)?;
+                }
             }
-        } else {
-            // Use buffered reading for large files (>2GB) or empty files
+        }
+        #[cfg(not(feature = "mmap"))]
+        {
             if should_show_progress {
                 self.hash_with_buffered_io_progress(&mut hasher, file, path, file_size)?;
             } else {
@@ -689,7 +1144,9 @@ impl HashComputer {
         path: &Path,
         file_size: u64,
     ) -> Result<(), HashError> {
-        use indicatif::{ProgressBar, ProgressStyle};
+        use crate::operation::{
+            LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle,
+        };
         use std::time::{Duration, Instant};
 
         // Create progress bar
@@ -794,7 +1251,6 @@ impl HashComputer {
     ///
     /// Memory mapping assumes the file will not be modified by other processes during hashing.
     /// If the file is modified concurrently, the hash results may be inconsistent.
-    #[allow(dead_code)]
     pub fn compute_multiple_hashes(
         &self,
         path: &Path,
@@ -836,33 +1292,49 @@ impl HashComputer {
         let should_show_progress =
             show_progress && file_size > PROGRESS_BAR_THRESHOLD && std::io::stdout().is_terminal();
 
-        // Use memory mapping for files smaller than 2GB
-        if file_size > 0 && file_size < MMAP_THRESHOLD {
-            // Try to memory map the file
-            match unsafe { Mmap::map(&file) } {
-                Ok(mmap) => {
-                    // Hash the entire mapped file with all hashers
-                    // Note: Progress bar not shown for mmap as it's very fast
-                    for (_, hasher) in &mut hashers {
-                        hasher.update(&mmap[..]);
+        // Use memory mapping for files smaller than 2GB when requested.
+        #[cfg(feature = "mmap")]
+        {
+            if file_size > 0 && file_size < MMAP_THRESHOLD {
+                // Try to memory map the file
+                match unsafe { Mmap::map(&file) } {
+                    Ok(mmap) => {
+                        // Hash the entire mapped file with all hashers
+                        // Note: Progress bar not shown for mmap as it's very fast
+                        for (_, hasher) in &mut hashers {
+                            hasher.update(&mmap[..]);
+                        }
+                    }
+                    Err(_) => {
+                        // Fall back to buffered reading if mmap fails
+                        if should_show_progress {
+                            self.hash_multiple_with_buffered_io_progress(
+                                &mut hashers,
+                                file,
+                                path,
+                                file_size,
+                            )?;
+                        } else {
+                            self.hash_multiple_with_buffered_io(&mut hashers, file, path)?;
+                        }
                     }
                 }
-                Err(_) => {
-                    // Fall back to buffered reading if mmap fails
-                    if should_show_progress {
-                        self.hash_multiple_with_buffered_io_progress(
-                            &mut hashers,
-                            file,
-                            path,
-                            file_size,
-                        )?;
-                    } else {
-                        self.hash_multiple_with_buffered_io(&mut hashers, file, path)?;
-                    }
+            } else {
+                // Use buffered reading for large files (>2GB) or empty files
+                if should_show_progress {
+                    self.hash_multiple_with_buffered_io_progress(
+                        &mut hashers,
+                        file,
+                        path,
+                        file_size,
+                    )?;
+                } else {
+                    self.hash_multiple_with_buffered_io(&mut hashers, file, path)?;
                 }
             }
-        } else {
-            // Use buffered reading for large files (>2GB) or empty files
+        }
+        #[cfg(not(feature = "mmap"))]
+        {
             if should_show_progress {
                 self.hash_multiple_with_buffered_io_progress(&mut hashers, file, path, file_size)?;
             } else {
@@ -920,7 +1392,9 @@ impl HashComputer {
         path: &Path,
         file_size: u64,
     ) -> Result<(), HashError> {
-        use indicatif::{ProgressBar, ProgressStyle};
+        use crate::operation::{
+            LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle,
+        };
         use std::time::{Duration, Instant};
 
         // Create progress bar
@@ -1283,9 +1757,6 @@ mod tests {
 
     #[test]
     fn test_compute_hash_stdin_equivalence() {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-
         // Create a test file
         let test_data = b"hello world from stdin test";
         let temp_file = "test_stdin_equiv_temp.txt";
