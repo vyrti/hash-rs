@@ -250,7 +250,7 @@ fn get_international_test_filenames() -> Vec<(&'static str, &'static str)> {
 #[test]
 fn test_international_filenames_scan() {
     let test_dir = "test_international_files";
-    let output_db = "test_international_output.txt";
+    let output_db = "test_international_output.qh";
 
     // Create test directory
     fs::create_dir_all(test_dir).expect("Failed to create test directory");
@@ -450,7 +450,7 @@ fn test_progress_bar_with_unicode_filenames() {
             "-d",
             test_dir,
             "-b",
-            "test_progress_output.txt",
+            "test_progress_output.qh",
         ])
         .output()
         .expect("Failed to execute scan command");
@@ -466,5 +466,5 @@ fn test_progress_bar_with_unicode_filenames() {
 
     // Cleanup
     fs::remove_dir_all(test_dir).ok();
-    fs::remove_file("test_progress_output.txt").ok();
+    fs::remove_file("test_progress_output.qh").ok();
 }

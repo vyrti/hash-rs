@@ -498,6 +498,13 @@ impl CompareEngine {
         database1: &Path,
         database2: &Path,
     ) -> Result<CompareReport, HashUtilityError> {
+        if DatabaseHandler::verification_checksum_algorithm(database1)?.is_some()
+            || DatabaseHandler::verification_checksum_algorithm(database2)?.is_some()
+        {
+            return Err(HashUtilityError::InvalidArguments {
+                message: "two-column checksum files are supported only by verification".to_owned(),
+            });
+        }
         // Gather database metadata
         let db1_info = Self::get_database_info(database1)?;
         let db2_info = Self::get_database_info(database2)?;
@@ -644,7 +651,7 @@ impl CompareEngine {
         // Detect format
         let format = DatabaseHandler::detect_format(path)?;
         let format_str = match format {
-            DatabaseFormat::Standard => "standard",
+            DatabaseFormat::Quichash => "quichash",
             DatabaseFormat::Hashdeep => "hashdeep",
         };
 

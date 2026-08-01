@@ -51,6 +51,7 @@ pub struct ScanEngine {
     fast_mode: bool,
     use_ignore: bool,
     format: DatabaseFormat,
+    excluded_output: Option<PathBuf>,
 }
 
 impl ScanEngine {
@@ -61,7 +62,8 @@ impl ScanEngine {
             parallel: false,
             fast_mode: false,
             use_ignore: true,
-            format: DatabaseFormat::Standard,
+            format: DatabaseFormat::Quichash,
+            excluded_output: None,
         }
     }
 
@@ -72,7 +74,8 @@ impl ScanEngine {
             parallel,
             fast_mode: false,
             use_ignore: true,
-            format: DatabaseFormat::Standard,
+            format: DatabaseFormat::Quichash,
+            excluded_output: None,
         }
     }
 
@@ -91,6 +94,15 @@ impl ScanEngine {
     /// Set the output format
     pub fn with_format(mut self, format: DatabaseFormat) -> Self {
         self.format = format;
+        self
+    }
+
+    /// Exclude an additional output path from traversal.
+    ///
+    /// This is useful when a scan writes a temporary plain database before
+    /// replacing an existing compressed database at a different path.
+    pub fn with_excluded_output(mut self, path: impl Into<PathBuf>) -> Self {
+        self.excluded_output = Some(path.into());
         self
     }
 
@@ -125,11 +137,27 @@ impl ScanEngine {
                 .map(|cwd| cwd.join(output))
                 .unwrap_or_else(|_| output.to_path_buf())
         };
+        let excluded_output_absolute = self.excluded_output.as_ref().map(|path| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(path))
+                    .unwrap_or_else(|_| path.clone())
+            }
+        });
 
         // Collect all files in the directory tree (only for sequential mode)
         println!("Scanning directory: {}", root.display());
         let files = if !self.parallel {
-            self.collect_files_with_exclusion(root, Some(&output_absolute))?
+            let mut files = self.collect_files_with_exclusion(root, Some(&output_absolute))?;
+            if let Some(excluded) = excluded_output_absolute
+                .as_ref()
+                .and_then(|path| path.canonicalize().ok())
+            {
+                files.retain(|path| path.canonicalize().ok().as_ref() != Some(&excluded));
+            }
+            files
         } else {
             // For parallel mode, we don't pre-collect files
             Vec::new()
@@ -145,11 +173,11 @@ impl ScanEngine {
 
         if self.parallel {
             self.scan_parallel(
-                &files,
                 algorithm,
                 output,
                 &canonical_root,
                 &output_absolute,
+                excluded_output_absolute.as_deref(),
                 start_time,
             )
         } else {
@@ -238,7 +266,7 @@ impl ScanEngine {
 
                     // Write hash entry to database with metadata
                     let write_result = match self.format {
-                        DatabaseFormat::Standard => DatabaseHandler::write_entry(
+                        DatabaseFormat::Quichash => DatabaseHandler::write_entry(
                             &mut writer,
                             &result.hash,
                             algorithm,
@@ -310,11 +338,11 @@ impl ScanEngine {
     /// Parallel scan implementation using producer-consumer pattern with jwalk and crossbeam-channel
     fn scan_parallel(
         &self,
-        _files: &[PathBuf],
         algorithm: &str,
         output: &Path,
         canonical_root: &Path,
         output_absolute: &Path,
+        excluded_output: Option<&Path>,
         start_time: Instant,
     ) -> Result<ScanStats, ScanError> {
         // Thread-safe counters for progress tracking
@@ -348,6 +376,7 @@ impl ScanEngine {
         let walker_root = canonical_root.to_path_buf();
         let use_ignore = self.use_ignore;
         let output_to_exclude = output_absolute.to_path_buf();
+        let additional_output_to_exclude = excluded_output.map(Path::to_path_buf);
 
         // Clone for walker thread
         let total_files_discovered_walker = Arc::clone(&total_files_discovered);
@@ -361,6 +390,7 @@ impl ScanEngine {
                 sender,
                 use_ignore,
                 Some(&output_to_exclude),
+                additional_output_to_exclude.as_deref(),
                 Arc::clone(&total_files_discovered_walker),
             );
 
@@ -501,7 +531,7 @@ impl ScanEngine {
 
         for result in results.iter() {
             let write_result = match self.format {
-                DatabaseFormat::Standard => DatabaseHandler::write_entry(
+                DatabaseFormat::Quichash => DatabaseHandler::write_entry(
                     &mut writer,
                     &result.0,
                     algorithm,
@@ -567,6 +597,7 @@ impl ScanEngine {
         sender: Sender<PathBuf>,
         use_ignore: bool,
         exclude_file: Option<&Path>,
+        additional_exclude_file: Option<&Path>,
         total_files_discovered: Arc<Mutex<usize>>,
     ) -> Result<(), ScanError> {
         // Load .hashignore patterns if enabled
@@ -584,6 +615,8 @@ impl ScanEngine {
 
         // Canonicalize exclude path once before the loop to avoid redundant calls
         let canonical_exclude = exclude_file.and_then(|p| p.canonicalize().ok());
+        let canonical_additional_exclude =
+            additional_exclude_file.and_then(|p| p.canonicalize().ok());
 
         // Prune ignored directories before traversal so directory-only patterns
         // also exclude every descendant in the parallel walker.
@@ -625,6 +658,13 @@ impl ScanEngine {
                     // Check if this is the excluded file
                     if let Some(ref exclude_canonical) = canonical_exclude {
                         // Compare canonical paths (only canonicalize current path once)
+                        if let Ok(canonical_path) = path.canonicalize() {
+                            if &canonical_path == exclude_canonical {
+                                continue;
+                            }
+                        }
+                    }
+                    if let Some(ref exclude_canonical) = canonical_additional_exclude {
                         if let Ok(canonical_path) = path.canonicalize() {
                             if &canonical_path == exclude_canonical {
                                 continue;
@@ -1120,6 +1160,7 @@ mod tests {
             temporary.path(),
             sender,
             true,
+            None,
             None,
             Arc::clone(&discovered),
         )

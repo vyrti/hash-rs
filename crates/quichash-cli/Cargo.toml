@@ -18,9 +18,10 @@ path = "src/main.rs"
 chrono.workspace = true
 clap.workspace = true
 indicatif.workspace = true
-quichash-core = { version = "0.0.21", path = "../quichash-core" }
+quichash-core = { version = "0.0.22", path = "../quichash-core" }
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+xz2.workspace = true

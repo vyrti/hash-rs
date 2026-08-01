@@ -8,7 +8,7 @@ fn hash_command() -> Command {
 fn version_and_default_binary_name_remain_compatible() {
     let output = hash_command().arg("version").output().unwrap();
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "hash v0.0.21\n");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "hash v0.0.22\n");
 }
 
 #[test]

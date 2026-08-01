@@ -19,6 +19,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   BINARY_NAME: hash
+  EXPECTED_VERSION: 0.0.22
 
 jobs:
   # ===================================================================
@@ -121,3 +122,7 @@ jobs:
       - name: Check quichash-core documentation
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo doc -p quichash-core --all-features --no-deps
+
+      - name: Smoke-test CLI version
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: test "$(cargo run -q -p quichash -- version)" = "hash v${EXPECTED_VERSION}"

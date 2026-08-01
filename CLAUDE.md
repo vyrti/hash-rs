@@ -65,10 +65,11 @@ cargo run -p quichash -- <args>      # Run CLI
 
 ### Database Formats
 
-- Standard text: `<hash>  <algorithm>  <mode>  <filepath>`
-- Hashdeep CSV format (compatible with hashdeep tool)
+- QuicHash text (`.qh`): `<hash>  <algorithm>  <mode>  <filepath>`
+- Hashdeep CSV format (`.hashdeep`, compatible with hashdeep tool)
+- Conventional two-column checksum files (`.md5`, `.sha256`, `.blake3`, etc.) for verification only
 - JSON output for automation
-- LZMA compression (.xz) supported
+- LZMA compression (`.qh.xz`) for QuicHash output; legacy `.xz` inputs remain readable
 
 ## Key Dependencies
 

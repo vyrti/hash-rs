@@ -22,6 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   BINARY_NAME: hash
+  EXPECTED_VERSION: 0.0.22
 
 jobs:
   # ===================================================================
@@ -135,6 +136,10 @@ jobs:
             cargo build -p quichash --release --target ${{ matrix.target }}
           fi
         shell: bash
+
+      - name: Smoke-test release CLI
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: test "$(target/${{ matrix.target }}/release/hash version)" = "hash v${EXPECTED_VERSION}"
 
       - name: Package artifacts
         shell: bash

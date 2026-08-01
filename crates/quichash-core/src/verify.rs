@@ -169,6 +169,33 @@ impl VerifyEngine {
             });
         }
 
+        if let Some(algorithm) = DatabaseHandler::verification_checksum_algorithm(database_path)? {
+            if !algorithm.is_available() {
+                return Err(HashUtilityError::AlgorithmUnavailable {
+                    algorithm: algorithm.canonical_name().to_owned(),
+                    feature: algorithm.required_feature(),
+                });
+            }
+            let manifest = DatabaseHandler::read_checksum_manifest(database_path)?;
+            let database = manifest
+                .entries
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.digests.into_iter().next().map(|digest| {
+                        (
+                            entry.relative_path,
+                            DatabaseEntry {
+                                hash: digest.to_hex(),
+                                algorithm: digest.algorithm.canonical_name().to_owned(),
+                                fast_mode: entry.mode == crate::hash::HashMode::Sampled,
+                            },
+                        )
+                    })
+                })
+                .collect();
+            return self.verify_database_entries(database, database_path, directory);
+        }
+
         let manifest = DatabaseHandler::read_manifest_with_policy(
             database_path,
             crate::operation::FailurePolicy::Continue,
@@ -224,6 +251,25 @@ impl VerifyEngine {
             missing_files: typed.missing_files.into_iter().map(absolute).collect(),
             new_files,
         })
+    }
+
+    fn verify_database_entries(
+        &self,
+        database: HashMap<PathBuf, DatabaseEntry>,
+        database_path: &Path,
+        directory: &Path,
+    ) -> Result<VerifyReport, VerifyError> {
+        let database_canonical_path = database_path.canonicalize().ok();
+        let mut current_files = self.collect_files_optimized(directory)?;
+        if let Some(path) = &database_canonical_path {
+            current_files.remove(path);
+        }
+        let database = self.resolve_database_paths_optimized(&database, directory)?;
+        if self.parallel {
+            self.verify_parallel(database, current_files)
+        } else {
+            self.verify_sequential(database, current_files)
+        }
     }
 
     /// Sequential verification implementation
@@ -517,6 +563,70 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn checksum_files_verify_in_parallel_and_sequential_modes() {
+        let temporary = tempfile::tempdir().unwrap();
+        create_test_file(&temporary.path().join("match.txt"), b"hello");
+        create_test_file(&temporary.path().join("changed.txt"), b"changed");
+        create_test_file(&temporary.path().join("new.txt"), b"new");
+        let checksum = temporary.path().join("checks.sha256");
+        fs::write(
+            &checksum,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  match.txt\n\
+             0000000000000000000000000000000000000000000000000000000000000000 *changed.txt\n\
+             1111111111111111111111111111111111111111111111111111111111111111 missing.txt\n",
+        )
+        .unwrap();
+
+        for parallel in [false, true] {
+            let report = VerifyEngine::with_parallel(parallel)
+                .verify(&checksum, temporary.path())
+                .unwrap();
+            assert_eq!(report.matches, 1);
+            assert_eq!(report.mismatches.len(), 1);
+            assert_eq!(report.missing_files.len(), 1);
+            assert_eq!(report.new_files.len(), 1);
+            assert!(report.new_files[0].ends_with("new.txt"));
+        }
+    }
+
+    #[test]
+    fn checksum_verification_rejects_unknown_extension() {
+        let temporary = tempfile::tempdir().unwrap();
+        let checksum = temporary.path().join("checks.digest");
+        fs::write(
+            &checksum,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  file.txt\n",
+        )
+        .unwrap();
+        let error = VerifyEngine::new()
+            .verify(&checksum, temporary.path())
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot infer checksum algorithm"));
+    }
+
+    #[cfg(not(feature = "sha2"))]
+    #[test]
+    fn checksum_verification_reports_disabled_algorithm() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(temporary.path().join("file.txt"), b"hello").unwrap();
+        let checksum = temporary.path().join("checks.sha256");
+        fs::write(
+            &checksum,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  file.txt\n",
+        )
+        .unwrap();
+        let error = VerifyEngine::new()
+            .verify(&checksum, temporary.path())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            HashUtilityError::AlgorithmUnavailable { .. }
+        ));
     }
 
     #[test]

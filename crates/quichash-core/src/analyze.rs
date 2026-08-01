@@ -262,6 +262,11 @@ impl AnalyzeEngine {
 
     /// Analyze a database file and generate a report
     pub fn analyze(&self, database_path: &Path) -> Result<AnalyzeReport, HashUtilityError> {
+        if DatabaseHandler::verification_checksum_algorithm(database_path)?.is_some() {
+            return Err(HashUtilityError::InvalidArguments {
+                message: "two-column checksum files are supported only by verification".to_owned(),
+            });
+        }
         // Get database file size
         let database_file_size = std::fs::metadata(database_path)
             .map_err(|e| {
@@ -276,7 +281,7 @@ impl AnalyzeEngine {
         // Detect format
         let format = DatabaseHandler::detect_format(database_path)?;
         let format_str = match format {
-            DatabaseFormat::Standard => "standard",
+            DatabaseFormat::Quichash => "quichash",
             DatabaseFormat::Hashdeep => "hashdeep",
         };
 
@@ -345,8 +350,8 @@ impl AnalyzeEngine {
         format: DatabaseFormat,
     ) -> Result<HashMap<PathBuf, EntryWithSize>, HashUtilityError> {
         match format {
-            DatabaseFormat::Standard => {
-                // Standard format doesn't have sizes
+            DatabaseFormat::Quichash => {
+                // QuicHash format doesn't have sizes
                 let db = DatabaseHandler::read_database(path)?;
                 Ok(db
                     .into_iter()
@@ -548,8 +553,8 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_analyze_standard_format() {
-        let db_path = "test_analyze_standard.txt";
+    fn test_analyze_quichash_format() {
+        let db_path = "test_analyze_quichash.qh";
         let content = "hash1  sha256  normal  file1.txt\n\
                        hash2  sha256  normal  file2.txt\n\
                        hash1  sha256  normal  file1_copy.txt\n";
@@ -562,7 +567,7 @@ mod tests {
         assert_eq!(report.stats.unique_hashes, 2);
         assert_eq!(report.stats.duplicate_groups, 1);
         assert_eq!(report.stats.duplicate_files, 2);
-        assert!(report.stats.total_file_size.is_none()); // Standard format has no sizes
+        assert!(report.stats.total_file_size.is_none()); // QuicHash format has no sizes
 
         fs::remove_file(db_path).unwrap();
     }

@@ -19,15 +19,16 @@ use std::path::PathBuf;
     hash file.txt -f -a sha256                              # fast mode\n  \
     hash --text \"hello world\" -a sha256\n  \
     cat file.txt | hash -a sha256\n  \
-    hash scan -d /path/to/dir -b hashes.txt                 # parallel by default\n  \
-    hash scan -d /path/to/dir -b hashes.txt --hdd           # sequential for old HDDs\n  \
-    hash scan -d /path/to/dir -b hashes.txt --format hashdeep  # hashdeep format\n  \
-    hash scan -d /path/to/dir -b hashes.txt --compress      # compressed output\n  \
-    hash scan -d /path/to/dir -b hashes.txt --json          # JSON output\n  \
-    hash verify -b hashes.txt -d /path/to/dir               # parallel by default\n  \
-    hash verify -b hashes.txt -d /path/to/dir --hdd         # sequential for old HDDs\n  \
-    hash compare db1.txt db2.txt                              # compare two databases\n  \
-    hash compare db1.txt db2.txt -b report.txt --format json  # JSON output\n  \
+    hash scan -d /path/to/dir -b hashes                    # creates hashes.qh\n  \
+    hash scan -d /path/to/dir -b hashes --hdd              # sequential for old HDDs\n  \
+    hash scan -d /path/to/dir -b hashes --format hashdeep  # creates hashes.hashdeep\n  \
+    hash scan -d /path/to/dir -b hashes --compress         # creates hashes.qh.xz\n  \
+    hash scan -d /path/to/dir -b hashes --json             # JSON report on stdout\n  \
+    hash verify -b hashes.qh -d /path/to/dir               # parallel by default\n  \
+    hash verify -b hashes.qh -d /path/to/dir --hdd         # sequential for old HDDs\n  \
+    hash verify -b checks.sha256 -d /path/to/dir           # two-column checksum file\n  \
+    hash compare db1.qh db2.qh                                # compare two databases\n  \
+    hash compare db1.qh db2.qh -b report.txt --format json    # JSON output\n  \
     hash dedup -d /path/to/dir                              # find duplicates\n  \
     hash dedup -d /path/to/dir --fast --json                # fast mode with JSON output\n  \
     hash benchmark\n  \
@@ -93,7 +94,7 @@ pub enum Command {
         )]
         algorithm: String,
 
-        /// Database file path to create (use .xz extension with --compress for automatic compression)
+        /// Database basename or path; the extension is normalized for the selected format
         #[arg(short = 'b', long = "database", value_name = "FILE")]
         database: PathBuf,
 
@@ -105,15 +106,15 @@ pub enum Command {
         #[arg(short = 'f', long = "fast")]
         fast: bool,
 
-        /// Output format: 'standard' (hash filepath) or 'hashdeep' (CSV format with size, hash, filename)
-        #[arg(long = "format", value_name = "FORMAT", default_value = "standard")]
+        /// Output format: 'quichash' (native text) or 'hashdeep' (CSV)
+        #[arg(long = "format", value_name = "FORMAT", default_value = "quichash")]
         format: String,
 
         /// Output results as JSON with metadata instead of plain text
         #[arg(long = "json")]
         json: bool,
 
-        /// Compress output database with LZMA compression (creates .xz file, saves ~70% space)
+        /// Compress QuicHash output with LZMA (creates a .qh.xz file)
         #[arg(long = "compress")]
         compress: bool,
     },
@@ -123,8 +124,8 @@ pub enum Command {
     /// Compares current file hashes against a stored database to detect
     /// modifications, deletions, and new files.
     Verify {
-        /// Hash database file or wildcard pattern (e.g., *.db, hashes?.txt)
-        /// Supports standard, hashdeep, and compressed .xz formats
+        /// Hash database file or wildcard pattern (e.g., *.qh, hashes?.qh)
+        /// Supports QuicHash, hashdeep, two-column checksum files, and compressed .xz formats
         #[arg(short = 'b', long = "database", value_name = "FILE")]
         database: String,
 
@@ -169,7 +170,7 @@ pub enum Command {
     ///
     /// Compares two hash database files to identify unchanged files, changed files,
     /// moved files, removed files, and added files.
-    /// Supports standard, hashdeep, and compressed (.xz) database formats.
+    /// Supports QuicHash, hashdeep, and compressed (.xz) database formats.
     Compare {
         /// First hash database file path (supports .xz compressed files)
         #[arg(value_name = "DATABASE1")]
@@ -382,7 +383,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, false);
                 assert_eq!(fast, false);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, false);
             }
@@ -421,7 +422,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, true);
                 assert_eq!(fast, false);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, false);
             }
@@ -460,7 +461,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, true);
                 assert_eq!(fast, false);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, false);
             }
@@ -702,7 +703,7 @@ mod tests {
             }) => {
                 assert_eq!(algorithm, "blake3"); // default algorithm
                 assert_eq!(fast, false); // default fast mode
-                assert_eq!(format, "standard"); // default format
+                assert_eq!(format, "quichash"); // default format
                 assert_eq!(json, false); // default json
                 assert_eq!(compress, false); // default compress
             }
@@ -741,7 +742,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, false);
                 assert_eq!(fast, true);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, false);
             }
@@ -780,7 +781,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, false);
                 assert_eq!(fast, true);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, false);
             }
@@ -820,7 +821,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, true);
                 assert_eq!(fast, true);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, false);
             }
@@ -907,7 +908,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, false);
                 assert_eq!(fast, false);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, false);
                 assert_eq!(compress, true);
             }
@@ -949,7 +950,7 @@ mod tests {
                 assert_eq!(database, PathBuf::from("hashes.txt"));
                 assert_eq!(hdd, true);
                 assert_eq!(fast, true);
-                assert_eq!(format, "standard");
+                assert_eq!(format, "quichash");
                 assert_eq!(json, true);
                 assert_eq!(compress, true);
             }

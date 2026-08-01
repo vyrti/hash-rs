@@ -20,8 +20,8 @@ library and the `quichash` CLI package, which installs the `hash` executable.
 - **Database Analysis**: Analyze database statistics, duplicates, and potential space savings
 - **Deduplication**: Find and report duplicate files based on hash comparison
 - **.hashignore**: Exclude files using gitignore-style patterns
-- **Formats**: Standard, hashdeep, JSON
-- **Compression**: LZMA compression for databases
+- **Formats**: QuicHash (`.qh`), hashdeep (`.hashdeep`), two-column checksum verification, JSON reports
+- **Compression**: LZMA compression for QuicHash databases (`.qh.xz`)
 - **Cross-Platform**: Linux, macOS, Windows, FreeBSD
 
 ## Installation
@@ -75,16 +75,19 @@ hash --text "hello world"
 cat myfile.txt | hash
 
 # Scan directory (parallel by default)
-hash scan -d ./my_dir -b hashes.db
+hash scan -d ./my_dir -b hashes       # creates hashes.qh
 
 # Scan on old HDD (sequential)
-hash scan -d ./my_dir -b hashes.db --hdd
+hash scan -d ./my_dir -b hashes --hdd
 
 # Verify
-hash verify -b hashes.db -d ./my_dir
+hash verify -b hashes.qh -d ./my_dir
+
+# Verify a conventional checksum file (algorithm inferred from extension)
+hash verify -b checks.sha256 -d ./my_dir
 
 # Analyze database
-hash analyze -d hashes.db
+hash analyze -d hashes.qh
 
 # List algorithms
 hash list
@@ -117,8 +120,8 @@ hash "img202405*.jpg" -a sha256              # All images from May 2024
 Patterns work with all commands:
 
 ```bash
-hash scan -d "data/*/hashes" -a sha256 -b output.db    # Multiple directories
-hash verify -b "*.db" -d "data/*" --json               # Multiple databases/dirs
+hash scan -d "data/*/hashes" -a sha256 -b output       # Creates output.qh
+hash verify -b "*.qh" -d "data/*" --json               # Multiple databases/dirs
 ```
 
 ### Hash Text or Stdin
@@ -131,22 +134,37 @@ cat myfile.txt | hash -a sha256              # Hash from stdin
 ### Scan Directory
 
 ```bash
-hash scan -d /path/to/dir -b hashes.db                        # Basic (blake3, parallel)
-hash scan -d /path/to/dir -b hashes.db --hdd                  # Sequential for old HDDs
-hash scan -d /path/to/dir -a sha256 -b hashes.db              # Custom algorithm
-hash scan -d /path/to/dir -b hashes.db -f                     # Fast mode
-hash scan -d /path/to/dir -b hashes.db -f --hdd               # Fast mode, sequential
-hash scan -d /path/to/dir -b hashes.db --compress             # Compressed
-hash scan -d /path/to/dir -b hashes.db --format hashdeep      # Hashdeep format
+hash scan -d /path/to/dir -b hashes                            # Basic; creates hashes.qh
+hash scan -d /path/to/dir -b hashes --hdd                      # Sequential for old HDDs
+hash scan -d /path/to/dir -a sha256 -b hashes                  # Custom algorithm
+hash scan -d /path/to/dir -b hashes -f                         # Fast mode
+hash scan -d /path/to/dir -b hashes -f --hdd                   # Fast mode, sequential
+hash scan -d /path/to/dir -b hashes --compress                 # Creates hashes.qh.xz
+hash scan -d /path/to/dir -b hashes --format hashdeep          # Creates hashes.hashdeep
 ```
 
 ### Verify Directory
 
 ```bash
-hash verify -b hashes.db -d /path/to/dir                      # Parallel (default)
-hash verify -b hashes.db -d /path/to/dir --hdd                # Sequential for old HDDs
-hash verify -b hashes.db -d /path/to/dir --json               # JSON output
+hash verify -b hashes.qh -d /path/to/dir                      # Parallel (default)
+hash verify -b hashes.qh -d /path/to/dir --hdd                # Sequential for old HDDs
+hash verify -b hashes.qh -d /path/to/dir --json               # JSON output
+hash verify -b checks.md5 -d /path/to/dir                     # GNU/generic checksum rows
+hash verify -b checks.blake3.xz -d /path/to/dir               # Compressed checksum file
 ```
+
+Verification accepts strict two-column checksum files in GNU text
+(`hash  path`), GNU binary (`hash *path`), or generic whitespace-separated
+form. The algorithm is inferred from a case-insensitive extension: `md5`,
+SHA-1/2/3 variants, BLAKE2b/s, BLAKE3, XXH3, or XXH128. A final `.xz` is
+ignored for algorithm inference. Blank and `#` comment lines are allowed, but
+malformed rows and unknown extensions fail verification. Creating these files
+with `scan` is not yet supported.
+
+Recognized extensions are `.md5`; `.sha1`/`.sha-1`; SHA-2 extensions from
+`.sha224` through `.sha512` with optional hyphens; `.sha3-224` through
+`.sha3-512`; `.blake2b`/`.blake2b-512`; `.blake2s`/`.blake2s-256`;
+`.blake3`; `.xxh3`; and `.xxh128`.
 
 ## Performance Optimizations
 
@@ -156,10 +174,10 @@ The verification engine uses parallel processing by default for significantly fa
 
 ```bash
 # Parallel verification (default, 2-4x faster)
-hash verify -b hashes.db -d /path/to/dir
+hash verify -b hashes.qh -d /path/to/dir
 
 # Sequential verification (for old HDDs)
-hash verify -b hashes.db -d /path/to/dir --hdd
+hash verify -b hashes.qh -d /path/to/dir --hdd
 ```
 
 **Performance improvements:**
@@ -181,9 +199,9 @@ hash verify -b hashes.db -d /path/to/dir --hdd
 - When minimizing system load
 
 ```bash
-hash verify -b hashes.db -d /path/to/dir              # Verify
-hash verify -b hashes.db.xz -d /path/to/dir           # Compressed
-hash verify -b hashes.db -d /path/to/dir --json       # JSON
+hash verify -b hashes.qh -d /path/to/dir              # Verify
+hash verify -b hashes.qh.xz -d /path/to/dir           # Compressed
+hash verify -b hashes.qh -d /path/to/dir --json       # JSON
 ```
 
 Output shows: Matches, Mismatches, Missing files, New files
@@ -193,12 +211,12 @@ Output shows: Matches, Mismatches, Missing files, New files
 Compare two hash databases to identify changes, moves, and differences:
 
 ```bash
-hash compare db1.txt db2.txt                          # Compare two databases
-hash compare db1.txt db2.txt -b report.txt            # Save report to file
-hash compare db1.txt db2.txt --format json            # JSON output
-hash compare db1.txt db2.txt --format hashdeep        # Hashdeep audit format
-hash compare db1.txt.xz db2.txt.xz                    # Compare compressed databases
-hash compare db1.txt db2.txt.xz                       # Mix compressed and plain
+hash compare db1.qh db2.qh                            # Compare two databases
+hash compare db1.qh db2.qh -b report.txt              # Save report to file
+hash compare db1.qh db2.qh --format json              # JSON output
+hash compare db1.qh db2.qh --format hashdeep          # Hashdeep audit format
+hash compare db1.qh.xz db2.qh.xz                      # Compare compressed databases
+hash compare db1.qh db2.qh.xz                         # Mix compressed and plain
 ```
 
 Output shows:
@@ -213,14 +231,14 @@ Output shows:
 Analyze a hash database to view statistics, duplicates, and potential space savings:
 
 ```bash
-hash analyze -d hashes.db                             # Analyze database
-hash analyze -d hashes.db --json                      # JSON output
-hash analyze -d hashes.db -b report.txt               # Save report to file
-hash analyze -d hashes.db.xz                          # Analyze compressed database
+hash analyze -d hashes.qh                             # Analyze database
+hash analyze -d hashes.qh --json                      # JSON output
+hash analyze -d hashes.qh -b report.txt               # Save report to file
+hash analyze -d hashes.qh.xz                          # Analyze compressed database
 ```
 
 Output shows:
-- **Database info**: Path, format (standard/hashdeep), size
+- **Database info**: Path, format (quichash/hashdeep), size
 - **Summary**: Total files, unique hashes, algorithms used
 - **File sizes**: Total size of all files (hashdeep format only)
 - **Duplicates**: Number of duplicate groups, duplicate files, potential space savings
@@ -262,8 +280,8 @@ hash list --json                  # JSON output
 | | `-b, --database <FILE>` | Output database |
 | | `--hdd` | Sequential mode for old HDDs (default: parallel) |
 | | `-f, --fast` | Fast mode |
-| | `--format <FMT>` | standard or hashdeep |
-| | `--compress` | LZMA compression |
+| | `--format <FMT>` | quichash (default) or hashdeep |
+| | `--compress` | LZMA compression; QuicHash only |
 | | `--json` | JSON output |
 | verify | `-b, --database <FILE>` | Database file or wildcard pattern |
 | | `-d, --directory <DIR>` | Directory or wildcard pattern to verify |
@@ -313,14 +331,14 @@ node_modules/
 !important.log
 EOF
 
-hash scan -d /path/to/dir -a sha256 -b hashes.db
+hash scan -d /path/to/dir -a sha256 -b hashes
 ```
 
 Patterns: `*.ext`, `dir/`, `!pattern`, `#comments`, `**/*.ext`
 
 ## Output Formats
 
-**Standard** (default):
+**QuicHash** (default, `.qh`):
 ```
 <hash>  <algorithm>  <mode>  <filepath>
 ```
@@ -328,6 +346,15 @@ Patterns: `*.ext`, `dir/`, `!pattern`, `#comments`, `**/*.ext`
 **Hashdeep**: CSV format with file size, compatible with hashdeep tool
 
 **JSON**: Structured output for automation
+
+**Two-column checksums**: verification-only input such as `.md5`, `.sha256`,
+or `.blake3`; both GNU markers and generic whitespace separators are accepted.
+
+New scan paths are normalized by format: `-b hashes`, `hashes.txt`, or
+`hashes.db` create `hashes.qh`; `--compress` creates `hashes.qh.xz`; and
+`--format hashdeep` creates `hashes.hashdeep`. Hashdeep compression is not
+supported for new scans. Legacy `.txt`, `.db`, `.hashdeep`, and `.xz` files
+remain readable because input format detection is content-based.
 
 ## Performance
 
@@ -365,41 +392,41 @@ Samples 300MB (first/middle/last 100MB) instead of entire file.
 hash downloaded-file.iso -a sha256
 
 # Backup verification (parallel by default)
-hash scan -d /data -b backup.db
-hash verify -b backup.db -d /data
+hash scan -d /data -b backup
+hash verify -b backup.qh -d /data
 
 # Backup on old HDD (sequential processing)
-hash scan -d /data -b backup.db --hdd
-hash verify -b backup.db -d /data
+hash scan -d /data -b backup --hdd
+hash verify -b backup.qh -d /data
 
 # Monitor changes
-hash scan -d /etc/config -b baseline.db
-hash verify -b baseline.db -d /etc/config
+hash scan -d /etc/config -b baseline
+hash verify -b baseline.qh -d /etc/config
 
 # Compare two snapshots
-hash scan -d /data -b snapshot1.db
+hash scan -d /data -b snapshot1
 # ... time passes ...
-hash scan -d /data -b snapshot2.db
-hash compare snapshot1.db snapshot2.db -b changes.txt
+hash scan -d /data -b snapshot2
+hash compare snapshot1.qh snapshot2.qh -b changes.txt
 
 # Analyze database for duplicates and stats
-hash analyze -d media.db                          # View stats and duplicates
-hash analyze -d media.db --json                   # JSON output for automation
+hash analyze -d media.qh                          # View stats and duplicates
+hash analyze -d media.qh --json                   # JSON output for automation
 
 # Find duplicates in directory
 hash dedup -d /media                              # Quick duplicate scan
 
 # Forensic analysis
-hash scan -d /evidence -a sha3-256 -b evidence.db
-hash scan -d /evidence -a sha256 -b evidence.txt --format hashdeep
+hash scan -d /evidence -a sha3-256 -b evidence
+hash scan -d /evidence -a sha256 -b evidence --format hashdeep
 
 # Quick checksums (blake3 is default)
 hash large-backup.tar.gz -f
-hash scan -d /backups -b checksums.db -f
+hash scan -d /backups -b checksums -f
 
 # Automation
-hash verify -b hashes.db -d /data --json | jq '.report.mismatches'
-hash compare db1.db db2.db --format json | jq '.summary'
+hash verify -b hashes.qh -d /data --json | jq '.report.mismatches'
+hash compare db1.qh db2.qh --format json | jq '.summary'
 ```
 
 ## Algorithm Selection
@@ -434,8 +461,8 @@ hash "*.txt" -a sha256                       # All .txt files in current dir
 hash "data/*.bin" -a sha256                  # All .bin files in data/
 hash "file?.txt" -a sha256                   # file1.txt, fileA.txt, etc.
 hash "[abc]*.jpg" -a sha256                  # Files starting with a, b, or c
-hash scan -d "backup/*/data" -a sha256 -b db.txt  # Multiple directories
-hash verify -b "*.db" -d "data/*"            # All .db files against all data dirs
+hash scan -d "backup/*/data" -a sha256 -b hashes  # Multiple directories
+hash verify -b "*.qh" -d "data/*"             # All .qh files against all data dirs
 ```
 
 **Notes:**

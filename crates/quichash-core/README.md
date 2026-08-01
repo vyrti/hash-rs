@@ -15,7 +15,7 @@ Use the complete default configuration:
 
 ```toml
 [dependencies]
-quichash-core = "0.0.21"
+quichash-core = "0.0.22"
 ```
 
 When consuming the workspace directly:
@@ -29,7 +29,7 @@ For a small BLAKE3-only build that hashes bytes and streams:
 
 ```toml
 [dependencies]
-quichash-core = { version = "0.0.21", default-features = false, features = ["blake3"] }
+quichash-core = { version = "0.0.22", default-features = false, features = ["blake3"] }
 ```
 
 ## Cargo features
@@ -222,22 +222,63 @@ Call [`Manifest::canonicalize`] before custom serialization, or
 
 [`database::DatabaseHandler`] reads and writes:
 
-- **Standard:** one `hash  algorithm  mode  path` row per digest. Repeated rows
+- **QuicHash (`.qh`):** one `hash  algorithm  mode  path` row per digest. Repeated rows
   for the same path are merged into one multi-digest entry.
-- **hashdeep:** `size,hash1,hash2,...,filename`, preserving every algorithm
+- **hashdeep (`.hashdeep`):** `size,hash1,hash2,...,filename`, preserving every algorithm
   column declared by the header.
-- **XZ:** either text format can be read transparently from an `.xz` path when
-  `xz` is enabled. `compress_database` creates the compressed copy.
+- **XZ:** existing text databases can be read transparently from any `.xz`
+  path when `xz` is enabled. New compression is limited to QuicHash content
+  and creates `.qh.xz`.
 
 ```no_run
-use std::fs::File;
 use std::path::Path;
 use quichash_core::database::{DatabaseFormat, DatabaseHandler};
 
 let manifest = DatabaseHandler::read_manifest(Path::new("hashes.txt"))?;
-let mut output = File::create("hashes.hashdeep")?;
-DatabaseHandler::write_manifest(&mut output, &manifest, DatabaseFormat::Hashdeep)?;
+let actual_path = DatabaseHandler::write_manifest_file(
+    Path::new("converted.txt"),
+    &manifest,
+    DatabaseFormat::Quichash,
+    false,
+)?;
+assert_eq!(actual_path, Path::new("converted.qh"));
 # Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+[`DatabaseHandler::canonical_output_path`](database::DatabaseHandler::canonical_output_path)
+normalizes requested output names to `.qh`, `.qh.xz`, or `.hashdeep`.
+[`DatabaseHandler::write_manifest_file`](database::DatabaseHandler::write_manifest_file)
+writes to that canonical path and returns it. On compression failure the plain
+`.qh` file is retained. [`DatabaseHandler::write_manifest`](database::DatabaseHandler::write_manifest)
+and the row writers remain available when an application intentionally owns
+its filenames and output streams.
+
+Reading remains content-based for compatibility, so legacy uncompressed
+`.txt` and `.db` manifests and historical `.txt.xz` or `.hashdeep.xz` files
+continue to work.
+
+Verification can additionally read conventional two-column checksum files
+with [`DatabaseHandler::read_checksum_manifest`](database::DatabaseHandler::read_checksum_manifest).
+The algorithm is inferred from extensions such as `.md5`, `.sha256`, or
+`.blake3` (optionally followed by `.xz`). Parsing accepts GNU text/binary
+markers and generic whitespace separators, and fails on malformed rows. This
+format is verification-only and is not accepted by manifest writers, analysis,
+or comparison.
+
+```no_run
+use std::path::Path;
+use quichash_core::{verify_folder, FailurePolicy, NoopObserver};
+use quichash_core::database::DatabaseHandler;
+
+let manifest = DatabaseHandler::read_checksum_manifest(Path::new("checks.sha256"))?;
+let report = verify_folder(
+    &manifest,
+    Path::new("assets"),
+    FailurePolicy::FailFast,
+    &NoopObserver,
+)?;
+assert!(report.mismatches.is_empty());
+# Ok::<(), quichash_core::HashUtilityError>(())
 ```
 
 [`DatabaseHandler::read_manifest`](database::DatabaseHandler::read_manifest)

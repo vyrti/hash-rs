@@ -277,17 +277,28 @@ fn handle_scan_command(
 ) -> Result<(), HashUtilityError> {
     // Parse format string
     let format = match format_str.to_lowercase().as_str() {
-        "standard" => DatabaseFormat::Standard,
+        "quichash" => DatabaseFormat::Quichash,
         "hashdeep" => DatabaseFormat::Hashdeep,
         _ => {
             return Err(HashUtilityError::InvalidArguments {
                 message: format!(
-                    "Invalid format '{}'. Valid formats are: standard, hashdeep",
+                    "Invalid format '{}'. Valid formats are: quichash, hashdeep",
                     format_str
                 ),
             });
         }
     };
+
+    if compress && format == DatabaseFormat::Hashdeep {
+        return Err(HashUtilityError::InvalidArguments {
+            message: "hashdeep output cannot be compressed; use QuicHash format with --compress"
+                .to_owned(),
+        });
+    }
+
+    let output = database::DatabaseHandler::canonical_output_path(output, format, false)?;
+    let final_output_path =
+        database::DatabaseHandler::canonical_output_path(&output, format, compress)?;
 
     // Expand wildcard pattern to get list of directories
     let directories = wildcard::expand_pattern(directory_pattern)?;
@@ -312,7 +323,8 @@ fn handle_scan_command(
 
     let engine = ScanEngine::with_parallel(parallel)
         .with_fast_mode(fast)
-        .with_format(format);
+        .with_format(format)
+        .with_excluded_output(final_output_path);
 
     // Scan all matched directories and aggregate stats
     let mut total_stats = scan::ScanStats {
@@ -325,8 +337,8 @@ fn handle_scan_command(
     // For multiple directories, we need to handle output differently
     if directories.len() > 1 {
         // Create the output file first (this will overwrite if it exists)
-        std::fs::File::create(output).map_err(|e| {
-            HashUtilityError::from_io_error(e, "creating output file", Some(output.to_path_buf()))
+        std::fs::File::create(&output).map_err(|e| {
+            HashUtilityError::from_io_error(e, "creating output file", Some(output.clone()))
         })?;
 
         // Scan each directory and append to the output file
@@ -334,7 +346,7 @@ fn handle_scan_command(
             // For the first directory, use normal mode (create/overwrite)
             // For subsequent directories, we need to append
             let temp_output = if idx == 0 {
-                output.to_path_buf()
+                output.clone()
             } else {
                 // Create a temporary file for this directory's results
                 let temp_path = output.with_extension(format!("tmp{}", idx));
@@ -356,12 +368,12 @@ fn handle_scan_command(
                 use std::io::Write;
                 let mut output_file = std::fs::OpenOptions::new()
                     .append(true)
-                    .open(output)
+                    .open(&output)
                     .map_err(|e| {
                         HashUtilityError::from_io_error(
                             e,
                             "opening output file for append",
-                            Some(output.to_path_buf()),
+                            Some(output.clone()),
                         )
                     })?;
 
@@ -371,7 +383,7 @@ fn handle_scan_command(
                         HashUtilityError::from_io_error(
                             e,
                             "appending to output file",
-                            Some(output.to_path_buf()),
+                            Some(output.clone()),
                         )
                     })?;
 
@@ -386,7 +398,7 @@ fn handle_scan_command(
         }
     } else {
         // Single directory - use normal scan
-        let stats = engine.scan_directory(&directories[0], algorithm, output)?;
+        let stats = engine.scan_directory(&directories[0], algorithm, &output)?;
         total_stats = stats;
     }
 
@@ -396,22 +408,26 @@ fn handle_scan_command(
     let final_output = if compress {
         use database::DatabaseHandler;
 
-        println!("Compressing database...");
-        let compressed_path = DatabaseHandler::compress_database(output)?;
+        if !json {
+            println!("Compressing database...");
+        }
+        let compressed_path = DatabaseHandler::compress_database(&output)?;
 
         // Remove the uncompressed file
-        std::fs::remove_file(output).map_err(|e| {
+        std::fs::remove_file(&output).map_err(|e| {
             HashUtilityError::from_io_error(
                 e,
                 "removing uncompressed database",
-                Some(output.to_path_buf()),
+                Some(output.clone()),
             )
         })?;
 
-        println!("Database compressed to: {}", compressed_path.display());
+        if !json {
+            println!("Database compressed to: {}", compressed_path.display());
+        }
         compressed_path
     } else {
-        output.to_path_buf()
+        output
     };
 
     if !json {
@@ -463,7 +479,11 @@ fn handle_scan_command(
                 output_file: final_output,
                 parallel,
                 fast_mode: fast,
-                format: format_str.to_string(),
+                format: match format {
+                    DatabaseFormat::Quichash => "quichash",
+                    DatabaseFormat::Hashdeep => "hashdeep",
+                }
+                .to_owned(),
             },
         };
 
