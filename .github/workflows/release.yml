@@ -124,9 +124,9 @@ jobs:
             echo 'linker = "arm-linux-gnueabihf-gcc"' >> ~/.cargo/config.toml
           fi
 
-      - name: Install cross (for FreeBSD)
+      - name: Install cross
         if: matrix.cross == true
-        run: cargo install cross --force --git https://github.com/cross-rs/cross
+        uses: taiki-e/install-action@cross
 
       - name: Build binary
         run: |

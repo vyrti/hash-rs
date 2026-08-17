@@ -23,10 +23,52 @@ env:
 
 jobs:
   # ===================================================================
-  # Job 1: Run Tests and Checks (Push, Pull Requests, or Manual 'test' run)
+  # Job 1: Fast Quality Gate (Format, Lint, Docs, Minimal Core)
+  # ===================================================================
+  quality_gate:
+    name: Fast Quality Gate (fmt, clippy, docs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: quality-gate-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Doc-tests
+        run: cargo test --doc --workspace --all-features
+
+      - name: Check minimal BLAKE3 core
+        run: cargo check -p quichash-core --no-default-features --features blake3
+
+      - name: Check quichash-core documentation
+        run: cargo doc -p quichash-core --all-features --no-deps
+
+  # ===================================================================
+  # Job 2: Multi-Platform Test Matrix
   # ===================================================================
   test_and_check:
     name: Test on ${{ matrix.target }}
+    needs: quality_gate
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -34,33 +76,54 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            can_test: true
+
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
+            can_test: true
+
           - runner: macos-15
             target: x86_64-apple-darwin
-          - runner: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-          - runner: ubuntu-latest
-            target: armv7-unknown-linux-gnueabihf
-          - runner: windows-latest
-            target: aarch64-pc-windows-msvc
+            can_test: true
+
           - runner: macos-14
             target: aarch64-apple-darwin
-          - runner: ubuntu-latest
-            target: x86_64-unknown-freebsd
-            cross: true
+            can_test: true
+
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
             cross: true
+            can_test: true
+
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+            can_test: true
+
           - runner: ubuntu-latest
             target: aarch64-unknown-linux-musl
             cross: true
+            can_test: true
+
+          - runner: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            cross: true
+            can_test: true
+
+          - runner: ubuntu-latest
+            target: x86_64-unknown-freebsd
+            cross: true
+            can_test: false
+
+          - runner: windows-latest
+            target: aarch64-pc-windows-msvc
+            can_test: false
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain (stable)
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -76,31 +139,9 @@ jobs:
             target/
           key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install dependencies for ARM cross-compile (Linux)
-        if: runner.os == 'Linux' && (matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'armv7-unknown-linux-gnueabihf')
-        run: |
-          sudo apt-get update
-          if [ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-          elif [ "${{ matrix.target }}" == "armv7-unknown-linux-gnueabihf" ]; then
-            sudo apt-get install -y gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
-          fi
-
-      - name: Configure cross-linker (Linux ARM)
-        if: runner.os == 'Linux' && (matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'armv7-unknown-linux-gnueabihf')
-        run: |
-          mkdir -p ~/.cargo
-          if [ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]; then
-            echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-            echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-          elif [ "${{ matrix.target }}" == "armv7-unknown-linux-gnueabihf" ]; then
-            echo '[target.armv7-unknown-linux-gnueabihf]' >> ~/.cargo/config.toml
-            echo 'linker = "arm-linux-gnueabihf-gcc"' >> ~/.cargo/config.toml
-          fi
-
-      - name: Install cross (for FreeBSD)
+      - name: Install cross
         if: matrix.cross == true
-        run: cargo install cross --force --git https://github.com/cross-rs/cross
+        uses: taiki-e/install-action@cross
 
       - name: Build project
         run: |
@@ -111,17 +152,13 @@ jobs:
           fi
         shell: bash
 
-      - name: Run tests
-        if: matrix.cross != true && matrix.target != 'aarch64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' && matrix.target != 'aarch64-pc-windows-msvc'
+      - name: Run tests (native)
+        if: matrix.can_test == true && matrix.cross != true
         run: cargo test --workspace --all-features --target ${{ matrix.target }}
 
-      - name: Check minimal BLAKE3 core
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo check -p quichash-core --no-default-features --features blake3
-
-      - name: Check quichash-core documentation
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo doc -p quichash-core --all-features --no-deps
+      - name: Run tests (cross / QEMU)
+        if: matrix.can_test == true && matrix.cross == true
+        run: cross test --workspace --all-features --target ${{ matrix.target }}
 
       - name: Smoke-test CLI version
         if: matrix.target == 'x86_64-unknown-linux-gnu'
