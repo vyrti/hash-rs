@@ -1,12 +1,13 @@
 [package]
 name = "quichash"
-version.workspace = true
-edition.workspace = true
+version = "0.0.22"
+edition = "2021"
 description = "High-performance cryptographic hash utility with SIMD optimization"
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-readme = "../../README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vyrti/quichash"
+homepage = "https://github.com/vyrti/quichash"
+documentation = "https://docs.rs/quichash"
+readme = "README.md"
 keywords = ["hash", "blake3", "sha256", "checksum", "crypto"]
 categories = ["command-line-utilities", "cryptography"]
 
@@ -19,13 +20,13 @@ name = "hash"
 path = "src/main.rs"
 
 [dependencies]
-chrono.workspace = true
-clap.workspace = true
-indicatif.workspace = true
+chrono = "0.4"
+clap = { version = "4.6", features = ["derive", "std", "help", "usage", "error-context"], default-features = false }
+indicatif = "0.18"
 quichash-core = { version = "0.0.22", path = "../quichash-core" }
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [dev-dependencies]
-tempfile.workspace = true
-xz2.workspace = true
+tempfile = "3.27"
+xz2 = "0.1"

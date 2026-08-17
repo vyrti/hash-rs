@@ -1,12 +1,15 @@
 [package]
 name = "quichash-core"
-version.workspace = true
-edition.workspace = true
-description = "Reusable hashing, manifest, and verification engine for QuicHash"
-license.workspace = true
-repository.workspace = true
-homepage.workspace = true
+version = "0.0.22"
+edition = "2021"
+description = "Reusable hashing, manifest, and verification engine - QuicHash"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vyrti/quichash"
+homepage = "https://github.com/vyrti/quichash"
+documentation = "https://docs.rs/quichash-core"
 readme = "README.md"
+keywords = ["hash", "manifest", "crypto", "blake3", "checksum"]
+categories = ["cryptography", "filesystem"]
 
 [features]
 default = ["all-algorithms", "filesystem", "parallel", "mmap", "xz", "reporting"]
@@ -25,24 +28,24 @@ xz = ["dep:xz2"]
 reporting = ["dep:chrono", "dep:serde_json"]
 
 [dependencies]
-blake2 = { workspace = true, optional = true }
-blake3 = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
-crossbeam-channel = { workspace = true, optional = true }
-glob = { workspace = true, optional = true }
-ignore = { workspace = true, optional = true }
-jwalk = { workspace = true, optional = true }
-md-5 = { workspace = true, optional = true }
-memmap2 = { workspace = true, optional = true }
-rayon = { workspace = true, optional = true }
-serde.workspace = true
-serde_json = { workspace = true, optional = true }
-sha1 = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
-sha3 = { workspace = true, optional = true }
-xxhash-rust = { workspace = true, optional = true }
-xz2 = { workspace = true, optional = true }
+blake2 = { version = "0.10", optional = true }
+blake3 = { version = "1.8", default-features = false, optional = true }
+chrono = { version = "0.4", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+glob = { version = "0.3", optional = true }
+ignore = { version = "0.4", optional = true }
+jwalk = { version = "0.9", optional = true }
+md-5 = { version = "0.11", optional = true }
+memmap2 = { version = "0.9", optional = true }
+rayon = { version = "1.12", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+sha1 = { version = "0.11", optional = true }
+sha2 = { version = "0.11", optional = true }
+sha3 = { version = "0.12", optional = true }
+xxhash-rust = { version = "0.8", features = ["xxh3"], optional = true }
+xz2 = { version = "0.1", optional = true }
 
 [dev-dependencies]
 hex = "0.4"
-tempfile.workspace = true
+tempfile = "3.27"
