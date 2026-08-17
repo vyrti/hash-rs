@@ -199,7 +199,6 @@ mod tests {
     #[test]
     fn test_benchmark_engine_creation() {
         let _engine = BenchmarkEngine::new();
-        assert!(true); // Just verify it can be created
     }
 
     #[test]

@@ -283,7 +283,7 @@ fn test_international_filenames_scan() {
 
     // Run scan command
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--release",
             "--",
@@ -381,7 +381,7 @@ fn test_international_filenames_hash() {
             Ok(_) => {
                 // Try to hash the file
                 let output = Command::new("cargo")
-                    .args(&["run", "--release", "--", file_path.to_str().unwrap()])
+                    .args(["run", "--release", "--", file_path.to_str().unwrap()])
                     .output()
                     .expect("Failed to execute hash command");
 
@@ -442,7 +442,7 @@ fn test_progress_bar_with_unicode_filenames() {
 
     // Run scan with progress bar
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "--release",
             "--",

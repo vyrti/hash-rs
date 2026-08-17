@@ -10,15 +10,14 @@ use std::path::{Component, Path, PathBuf};
 #[allow(dead_code)]
 pub fn normalize_path_string(path_str: &str) -> String {
     // Replace both types of separators with the platform separator
-    let normalized = if cfg!(windows) {
+
+    if cfg!(windows) {
         // On Windows, convert forward slashes to backslashes
         path_str.replace('/', "\\")
     } else {
         // On Unix-like systems, convert backslashes to forward slashes
         path_str.replace('\\', "/")
-    };
-
-    normalized
+    }
 }
 
 /// Parse a path from a database entry, handling mixed separators
@@ -275,7 +274,7 @@ mod tests {
         let file = Path::new(&file_path);
 
         // Get relative path using cached base
-        let result = get_relative_path_cached(&file, &canonical_base);
+        let result = get_relative_path_cached(file, &canonical_base);
         assert!(result.is_ok());
 
         let relative = result.unwrap();

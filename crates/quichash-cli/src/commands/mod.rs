@@ -1,0 +1,19 @@
+pub mod analyze;
+pub mod benchmark;
+pub mod compare;
+pub mod dedup;
+pub mod hash;
+pub mod list;
+pub mod scan;
+pub mod verify;
+pub mod version;
+
+pub use analyze::handle_analyze_command;
+pub use benchmark::handle_benchmark_command;
+pub use compare::handle_compare_command;
+pub use dedup::handle_dedup_command;
+pub use hash::handle_hash_command;
+pub use list::handle_list_command;
+pub use scan::handle_scan_command;
+pub use verify::handle_verify_command;
+pub use version::handle_version_command;
