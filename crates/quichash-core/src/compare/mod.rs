@@ -8,8 +8,6 @@ use crate::database::{DatabaseEntry, DatabaseFormat, DatabaseHandler};
 use crate::error::HashUtilityError;
 
 mod report;
-#[cfg(test)]
-mod tests;
 
 /// Metadata about a database file
 #[derive(Debug, Clone, serde::Serialize)]
@@ -287,15 +285,14 @@ impl CompareEngine {
     }
 
     /// Find duplicate hashes within a database
+    /// Find duplicate files within a single database
     ///
     /// # Arguments
     /// * `database` - The database to search for duplicates
     ///
     /// # Returns
     /// A vector of DuplicateGroup, each containing files with the same hash
-    pub(crate) fn find_duplicates(
-        database: &HashMap<PathBuf, DatabaseEntry>,
-    ) -> Vec<DuplicateGroup> {
+    pub fn find_duplicates(database: &HashMap<PathBuf, DatabaseEntry>) -> Vec<DuplicateGroup> {
         // Build a map from hash to list of paths
         let mut hash_to_paths: HashMap<String, Vec<PathBuf>> = HashMap::new();
 

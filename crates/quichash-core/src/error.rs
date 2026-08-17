@@ -5,9 +5,6 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
-#[cfg(test)]
-mod tests;
-
 /// Main error type for the hash utility
 /// Provides context-rich error messages with file paths and operations
 #[derive(Debug)]

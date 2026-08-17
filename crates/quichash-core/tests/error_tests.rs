@@ -1,5 +1,7 @@
-use super::*;
+use quichash_core::error::HashUtilityError;
 use std::error::Error;
+use std::io;
+use std::path::PathBuf;
 
 #[test]
 fn test_file_not_found_error_display() {

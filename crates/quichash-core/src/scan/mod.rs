@@ -12,8 +12,6 @@ use crate::hash::HashComputer;
 
 mod parallel;
 mod sequential;
-#[cfg(test)]
-mod tests;
 
 /// Backward-compatible error name for directory scan operations.
 pub type ScanError = HashUtilityError;
@@ -216,15 +214,13 @@ impl ScanEngine {
         )
     }
 
-    /// Helper function for backward compatibility
-    #[allow(dead_code)]
-    fn collect_files(&self, root: &Path) -> Result<Vec<PathBuf>, ScanError> {
+    /// Helper function for collecting files
+    pub fn collect_files(&self, root: &Path) -> Result<Vec<PathBuf>, ScanError> {
         sequential::collect_files_with_exclusion(self.use_ignore, root, None)
     }
 
-    /// Helper function for backward compatibility
-    #[allow(dead_code)]
-    fn collect_files_with_exclusion(
+    /// Helper function for collecting files with exclusion
+    pub fn collect_files_with_exclusion(
         &self,
         root: &Path,
         exclude_file: Option<&Path>,

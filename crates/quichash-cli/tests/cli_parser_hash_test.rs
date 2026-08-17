@@ -1,4 +1,6 @@
-use super::*;
+use clap::Parser;
+use quichash::cli::Cli;
+use std::path::PathBuf;
 
 #[test]
 fn test_parse_hash_command() {

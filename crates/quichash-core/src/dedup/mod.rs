@@ -10,10 +10,9 @@ use crate::hash::HashComputer;
 
 mod report;
 mod scanner;
-#[cfg(test)]
-mod tests;
 
 pub use report::{DedupReport, DedupStats, DuplicateGroupWithSize};
+pub use scanner::walk_directory_streaming;
 
 /// Engine for finding duplicate files in a directory
 pub struct DedupEngine {

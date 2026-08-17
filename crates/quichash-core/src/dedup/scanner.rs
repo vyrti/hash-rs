@@ -241,7 +241,7 @@ pub(crate) fn scan_parallel(
 }
 
 /// Walk directory and send file paths to channel
-pub(crate) fn walk_directory_streaming(
+pub fn walk_directory_streaming(
     root: &Path,
     sender: crossbeam_channel::Sender<PathBuf>,
     total_files_discovered: Arc<Mutex<usize>>,
@@ -274,7 +274,7 @@ pub(crate) fn walk_directory_streaming(
                     .strip_prefix(&root)
                     .is_ok_and(|relative| handler.should_ignore(relative, true))
                 {
-                    child.read_children_path = None;
+                    child.read_children = None;
                 }
             }
         });

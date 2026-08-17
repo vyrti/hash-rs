@@ -1,6 +1,25 @@
-use super::*;
+use quichash_core::database::{DatabaseFormat, DatabaseHandler};
+use quichash_core::hash::Algorithm;
+use quichash_core::manifest::{Manifest, ManifestEntry};
 use std::fs::{self, File};
 use std::io::Write;
+use std::path::{Path, PathBuf};
+
+#[allow(dead_code)]
+fn sample_manifest() -> Manifest {
+    Manifest {
+        entries: vec![ManifestEntry {
+            relative_path: PathBuf::from("nested/file.txt"),
+            size: 0,
+            mode: quichash_core::hash::HashMode::Full,
+            digests: vec![quichash_core::hash::DigestValue::from_bytes(
+                Algorithm::Sha256,
+                vec![2; 32],
+            )
+            .unwrap()],
+        }],
+    }
+}
 
 #[cfg(feature = "xz")]
 #[test]

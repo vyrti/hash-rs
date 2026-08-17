@@ -5,9 +5,6 @@ use clap::{Parser, Subcommand};
 use quichash_core::error::HashUtilityError;
 use std::path::PathBuf;
 
-#[cfg(test)]
-mod tests;
-
 /// Hash Utility - Cryptographic hash computation and verification tool
 ///
 /// A cross-platform console application for computing cryptographic hashes,

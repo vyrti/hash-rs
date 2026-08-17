@@ -9,8 +9,6 @@ use crate::error::HashUtilityError;
 
 mod helpers;
 mod report;
-#[cfg(test)]
-mod tests;
 
 pub use report::{format_size, AnalyzeReport, AnalyzeStats, DuplicateGroup, EntryWithSize};
 

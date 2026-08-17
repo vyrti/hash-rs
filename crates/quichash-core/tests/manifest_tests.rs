@@ -1,4 +1,10 @@
-use super::*;
+use quichash_core::hash::{Algorithm, DigestValue, HashMode};
+use quichash_core::manifest::{Manifest, ManifestEntry};
+
+#[cfg(all(feature = "filesystem", feature = "sha2", feature = "blake3"))]
+use quichash_core::manifest::{scan_folder, verify_folder, ScanOptions};
+#[cfg(all(feature = "filesystem", feature = "sha2", feature = "blake3"))]
+use quichash_core::operation::{FailurePolicy, NoopObserver};
 
 #[test]
 fn folder_digest_is_independent_of_input_order() {
@@ -6,10 +12,7 @@ fn folder_digest_is_independent_of_input_order() {
         relative_path: path.into(),
         size: 1,
         mode: HashMode::Full,
-        digests: vec![DigestValue {
-            algorithm: Algorithm::Blake3,
-            bytes: vec![value; 32],
-        }],
+        digests: vec![DigestValue::from_bytes(Algorithm::Blake3, vec![value; 32]).unwrap()],
     };
     let left = Manifest {
         entries: vec![digest("b", 2), digest("a", 1)],
@@ -29,10 +32,7 @@ fn rename_changes_folder_digest() {
         relative_path: path.into(),
         size: 3,
         mode: HashMode::Full,
-        digests: vec![DigestValue {
-            algorithm: Algorithm::Blake3,
-            bytes: vec![7; 32],
-        }],
+        digests: vec![DigestValue::from_bytes(Algorithm::Blake3, vec![7; 32]).unwrap()],
     };
     let left = Manifest {
         entries: vec![entry("a")],
@@ -52,10 +52,7 @@ fn sampled_and_full_folder_digests_are_distinct() {
         relative_path: "file".into(),
         size: 3,
         mode,
-        digests: vec![DigestValue {
-            algorithm: Algorithm::Blake3,
-            bytes: vec![9; 32],
-        }],
+        digests: vec![DigestValue::from_bytes(Algorithm::Blake3, vec![9; 32]).unwrap()],
     };
     let full = Manifest {
         entries: vec![entry(HashMode::Full)],
@@ -84,7 +81,7 @@ fn folder_scan_and_multi_digest_verification() {
         parallel: true,
         ..ScanOptions::default()
     };
-    let scanned = scan_folder(temporary.path(), &options, &crate::operation::NoopObserver).unwrap();
+    let scanned = scan_folder(temporary.path(), &options, &NoopObserver).unwrap();
     assert_eq!(scanned.manifest.entries.len(), 2);
     assert!(scanned
         .manifest
@@ -97,7 +94,7 @@ fn folder_scan_and_multi_digest_verification() {
         &scanned.manifest,
         temporary.path(),
         FailurePolicy::FailFast,
-        &crate::operation::NoopObserver,
+        &NoopObserver,
     )
     .unwrap();
     assert_eq!(verified.matches, 2);
@@ -108,7 +105,7 @@ fn folder_scan_and_multi_digest_verification() {
         &scanned.manifest,
         temporary.path(),
         FailurePolicy::FailFast,
-        &crate::operation::NoopObserver,
+        &NoopObserver,
     )
     .unwrap();
     assert_eq!(verified.mismatches.len(), 2);

@@ -11,8 +11,6 @@ use crate::operation::FailurePolicy;
 
 #[cfg(feature = "filesystem")]
 mod scan;
-#[cfg(test)]
-mod tests;
 #[cfg(feature = "filesystem")]
 mod verify;
 

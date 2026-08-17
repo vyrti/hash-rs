@@ -315,7 +315,7 @@ pub(crate) fn walk_directory_streaming(
                     .strip_prefix(&root)
                     .is_ok_and(|relative| handler.should_ignore(relative, true))
                 {
-                    child.read_children_path = None;
+                    child.read_children = None;
                 }
             }
         });

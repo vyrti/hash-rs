@@ -1,7 +1,8 @@
-use super::*;
+use quichash_core::error::HashUtilityError;
+use quichash_core::hash::{HashComputer, HashRegistry};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[test]
 fn test_compute_hash_sha256() {
@@ -218,7 +219,7 @@ fn test_compute_multiple_hashes_stdin_structure() {
     let _ = &algorithms;
 
     // Just verify the computer was created successfully
-    assert_eq!(computer.buffer_size, 1024 * 1024);
+    assert_eq!(computer.buffer_size(), 1024 * 1024);
 }
 
 #[test]

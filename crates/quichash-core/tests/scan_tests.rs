@@ -1,6 +1,7 @@
-use super::*;
 use crossbeam_channel::bounded;
+use quichash_core::scan::ScanEngine;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 #[test]

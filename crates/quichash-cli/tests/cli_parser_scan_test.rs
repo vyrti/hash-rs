@@ -1,4 +1,6 @@
-use super::*;
+use clap::Parser;
+use quichash::cli::{Cli, Command};
+use std::path::PathBuf;
 
 #[test]
 fn test_parse_scan_command() {

@@ -1,6 +1,27 @@
-use super::*;
-use crate::manifest::ManifestEntry;
-use std::fs::{self, File};
+use quichash_core::database::{DatabaseFormat, DatabaseHandler};
+use quichash_core::error::HashUtilityError;
+use quichash_core::hash::Algorithm;
+use quichash_core::manifest::{Manifest, ManifestEntry};
+use quichash_core::operation::FailurePolicy;
+#[cfg(feature = "xz")]
+use std::fs::File;
+use std::fs::{self};
+use std::path::{Path, PathBuf};
+
+fn sample_manifest() -> Manifest {
+    Manifest {
+        entries: vec![ManifestEntry {
+            relative_path: PathBuf::from("nested/file.txt"),
+            size: 0,
+            mode: quichash_core::hash::HashMode::Full,
+            digests: vec![quichash_core::hash::DigestValue::from_bytes(
+                Algorithm::Sha256,
+                vec![2; 32],
+            )
+            .unwrap()],
+        }],
+    }
+}
 
 #[test]
 fn checksum_extensions_map_to_every_supported_algorithm() {
@@ -284,16 +305,11 @@ fn typed_hashdeep_round_trip_preserves_every_digest() {
         entries: vec![ManifestEntry {
             relative_path: PathBuf::from("nested/file.txt"),
             size: 5,
-            mode: crate::hash::HashMode::Full,
+            mode: quichash_core::hash::HashMode::Full,
             digests: vec![
-                crate::hash::DigestValue {
-                    algorithm: Algorithm::Md5,
-                    bytes: vec![1; 16],
-                },
-                crate::hash::DigestValue {
-                    algorithm: Algorithm::Sha256,
-                    bytes: vec![2; 32],
-                },
+                quichash_core::hash::DigestValue::from_bytes(Algorithm::Md5, vec![1; 16]).unwrap(),
+                quichash_core::hash::DigestValue::from_bytes(Algorithm::Sha256, vec![2; 32])
+                    .unwrap(),
             ],
         }],
     };

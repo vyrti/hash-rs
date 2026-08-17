@@ -1,6 +1,8 @@
-use super::*;
+use quichash_core::error::HashUtilityError;
+use quichash_core::verify::VerifyEngine;
 use std::fs;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 fn create_test_file(path: &Path, content: &[u8]) {
     if let Some(parent) = path.parent() {

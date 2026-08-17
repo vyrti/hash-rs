@@ -10,8 +10,6 @@ use crate::hash::HashComputer;
 
 mod engine;
 mod report;
-#[cfg(test)]
-mod tests;
 
 pub use engine::VerifyError;
 pub use report::{Mismatch, VerifyReport};
@@ -169,15 +167,13 @@ impl VerifyEngine {
         }
     }
 
-    /// Legacy method for backward compatibility
-    #[allow(dead_code)]
-    fn collect_files(&self, directory: &Path) -> Result<HashSet<PathBuf>, VerifyError> {
+    /// Method for collecting files
+    pub fn collect_files(&self, directory: &Path) -> Result<HashSet<PathBuf>, VerifyError> {
         engine::collect_files_optimized(directory)
     }
 
-    /// Legacy method for backward compatibility
-    #[allow(dead_code)]
-    fn resolve_database_paths(
+    /// Method for resolving database paths
+    pub fn resolve_database_paths(
         &self,
         database: &HashMap<PathBuf, DatabaseEntry>,
         base_directory: &Path,

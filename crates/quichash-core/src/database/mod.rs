@@ -15,8 +15,6 @@ pub(crate) mod compression;
 pub(crate) mod hashdeep;
 pub(crate) mod manifest_io;
 pub(crate) mod quichash;
-#[cfg(test)]
-mod tests;
 
 pub(crate) use hashdeep::HashdeepRecord;
 
@@ -62,12 +60,13 @@ pub struct ManifestRead {
 pub struct DatabaseHandler;
 
 impl DatabaseHandler {
-    #[cfg(test)]
-    pub(crate) fn checksum_algorithm_from_path(path: &Path) -> Option<Algorithm> {
+    /// Infer a checksum algorithm from a path's file extension.
+    pub fn checksum_algorithm_from_path(path: &Path) -> Option<Algorithm> {
         checksum::checksum_algorithm_from_path(path)
     }
 
-    pub(crate) fn verification_checksum_algorithm(
+    /// Check if a path corresponds to a supported checksum format for verification.
+    pub fn verification_checksum_algorithm(
         path: &Path,
     ) -> Result<Option<Algorithm>, HashUtilityError> {
         checksum::verification_checksum_algorithm(path)
@@ -168,13 +167,13 @@ impl DatabaseHandler {
         manifest_io::write_manifest(writer, manifest, format)
     }
 
-    #[cfg(test)]
-    pub(crate) fn parse_line(line: &str) -> Option<(String, String, bool, PathBuf)> {
+    /// Parse a single line from a QuicHash database file.
+    pub fn parse_line(line: &str) -> Option<(String, String, bool, PathBuf)> {
         quichash::parse_line(line)
     }
 
-    #[cfg(test)]
-    pub(crate) fn parse_hashdeep_line(
+    /// Parse a single line from a hashdeep database file.
+    pub fn parse_hashdeep_line(
         line: &str,
         algorithms: &[String],
     ) -> Option<Vec<(PathBuf, DatabaseEntry)>> {

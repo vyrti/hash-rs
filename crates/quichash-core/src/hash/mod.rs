@@ -10,8 +10,6 @@ pub(crate) mod computer;
 pub(crate) mod file;
 pub(crate) mod hasher;
 pub(crate) mod registry;
-#[cfg(test)]
-mod tests;
 
 pub use algorithm::{Algorithm, AlgorithmInfo, DigestValue, HashMode};
 pub use computer::HashComputer;

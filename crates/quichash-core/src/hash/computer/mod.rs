@@ -32,6 +32,11 @@ impl HashComputer {
         Self { buffer_size }
     }
 
+    /// Return the buffer size
+    pub fn buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+
     /// Compute hash from text string
     pub fn compute_hash_text(
         &self,

@@ -10,6 +10,10 @@ readme = "../../README.md"
 keywords = ["hash", "blake3", "sha256", "checksum", "crypto"]
 categories = ["command-line-utilities", "cryptography"]
 
+[lib]
+name = "quichash"
+path = "src/lib.rs"
+
 [[bin]]
 name = "hash"
 path = "src/main.rs"

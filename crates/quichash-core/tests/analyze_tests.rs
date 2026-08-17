@@ -1,4 +1,4 @@
-use super::*;
+use quichash_core::analyze::{format_size, AnalyzeEngine};
 use std::fs;
 use std::path::{Path, PathBuf};
 

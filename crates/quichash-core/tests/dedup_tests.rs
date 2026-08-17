@@ -1,6 +1,7 @@
-use super::*;
 use crossbeam_channel::bounded;
+use quichash_core::dedup::walk_directory_streaming;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -15,7 +16,7 @@ fn test_walk_directory_streaming_skips_ignored_directory_patterns() {
 
     let (sender, receiver) = bounded::<PathBuf>(16);
     let discovered = Arc::new(Mutex::new(0));
-    scanner::walk_directory_streaming(temporary.path(), sender, Arc::clone(&discovered)).unwrap();
+    walk_directory_streaming(temporary.path(), sender, Arc::clone(&discovered)).unwrap();
     let files: Vec<_> = receiver.iter().collect();
 
     assert_eq!(files.len(), 1);
