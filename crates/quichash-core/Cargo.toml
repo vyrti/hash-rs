@@ -1,8 +1,9 @@
 [package]
 name = "quichash-core"
-version = "0.0.22"
+version = "0.1.0"
 edition = "2021"
-description = "Reusable hashing, manifest, and verification engine - QuicHash"
+rust-version = "1.95"
+description = "Reusable hashing, manifest, and verification engine for QuicHash"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vyrti/quichash"
 homepage = "https://github.com/vyrti/quichash"

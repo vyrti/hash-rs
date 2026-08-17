@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Whether an operation stops on the first item-level failure.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum FailurePolicy {
     /// Return the first error without a partial report.
     #[default]
@@ -14,6 +15,7 @@ pub enum FailurePolicy {
 
 /// Current phase of a long-running operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ProgressPhase {
     /// Filesystem entries are being enumerated.
     Discovering,
@@ -27,6 +29,7 @@ pub enum ProgressPhase {
 
 /// Structured progress suitable for a TUI, GUI, or CLI adapter.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProgressEvent {
     /// Kind of work currently underway.
     pub phase: ProgressPhase,

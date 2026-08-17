@@ -50,6 +50,7 @@ pub struct FolderDigest {
 
 #[cfg(feature = "filesystem")]
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 /// Configuration for [`scan_folder`].
 pub struct ScanOptions {
     /// Algorithms computed for every file and for the folder digest.
@@ -64,6 +65,50 @@ pub struct ScanOptions {
     pub failure_policy: FailurePolicy,
     /// Optional file to omit, commonly a manifest written inside the root.
     pub exclude: Option<PathBuf>,
+}
+
+#[cfg(feature = "filesystem")]
+impl ScanOptions {
+    /// Create new default [`ScanOptions`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the algorithms to compute.
+    pub fn with_algorithms(mut self, algorithms: Vec<Algorithm>) -> Self {
+        self.algorithms = algorithms;
+        self
+    }
+
+    /// Set the hashing mode (Full or Sampled).
+    pub fn with_mode(mut self, mode: HashMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Enable or disable parallel processing.
+    pub fn with_parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel;
+        self
+    }
+
+    /// Enable or disable `.hashignore` parsing.
+    pub fn with_hashignore(mut self, use_hashignore: bool) -> Self {
+        self.use_hashignore = use_hashignore;
+        self
+    }
+
+    /// Set the failure policy.
+    pub fn with_failure_policy(mut self, failure_policy: FailurePolicy) -> Self {
+        self.failure_policy = failure_policy;
+        self
+    }
+
+    /// Exclude a specific path (e.g. output database).
+    pub fn with_exclude(mut self, exclude: Option<PathBuf>) -> Self {
+        self.exclude = exclude;
+        self
+    }
 }
 
 #[cfg(feature = "filesystem")]
@@ -82,6 +127,7 @@ impl Default for ScanOptions {
 
 #[cfg(feature = "filesystem")]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[non_exhaustive]
 /// Recoverable item-level problem retained under [`FailurePolicy::Continue`].
 pub struct OperationIssue {
     /// Related path when the failing item is known.
@@ -92,6 +138,7 @@ pub struct OperationIssue {
 
 #[cfg(feature = "filesystem")]
 #[derive(Clone, Debug, Serialize)]
+#[non_exhaustive]
 /// Successful folder scan output, including partial-operation issues.
 pub struct ScanReport {
     /// Canonicalized per-file manifest.
@@ -108,6 +155,7 @@ pub struct ScanReport {
 
 #[cfg(feature = "filesystem")]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[non_exhaustive]
 /// One algorithm-specific difference between expected and actual file data.
 pub struct DigestMismatch {
     /// Relative path of the changed file.
@@ -122,6 +170,7 @@ pub struct DigestMismatch {
 
 #[cfg(feature = "filesystem")]
 #[derive(Clone, Debug, Default, Serialize)]
+#[non_exhaustive]
 /// Result of comparing a typed manifest with a directory tree.
 pub struct ManifestVerifyReport {
     /// Files for which every stored digest matched.

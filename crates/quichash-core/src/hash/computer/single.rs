@@ -26,6 +26,7 @@ impl HashComputer {
     /// Memory mapping assumes the file will not be modified by other processes during hashing.
     /// If the file is modified concurrently, the hash result may be inconsistent.
     /// This is acceptable for typical use cases where files are not being actively modified.
+    #[allow(unsafe_code)]
     pub fn compute_hash(
         &self,
         path: &Path,
@@ -38,6 +39,7 @@ impl HashComputer {
     ///
     /// If show_progress is true and the file is larger than 1GB and stdout is a TTY,
     /// displays a progress bar that updates 10 times per second.
+    #[allow(unsafe_code)]
     pub fn compute_hash_with_progress(
         &self,
         path: &Path,

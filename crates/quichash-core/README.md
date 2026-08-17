@@ -188,14 +188,13 @@ use quichash_core::{
     scan_folder, Algorithm, FailurePolicy, HashMode, NoopObserver, ScanOptions,
 };
 
-let options = ScanOptions {
-    algorithms: vec![Algorithm::Blake3, Algorithm::Sha256],
-    mode: HashMode::Full,
-    parallel: true,
-    use_hashignore: true,
-    failure_policy: FailurePolicy::FailFast,
-    exclude: None,
-};
+let options = ScanOptions::default()
+    .with_algorithms(vec![Algorithm::Blake3, Algorithm::Sha256])
+    .with_mode(HashMode::Full)
+    .with_parallel(true)
+    .with_hashignore(true)
+    .with_failure_policy(FailurePolicy::FailFast)
+    .with_exclude(None);
 let report = scan_folder(Path::new("assets"), &options, &NoopObserver)?;
 println!("hashed {} files", report.files_processed);
 for root in report.folder_digests {

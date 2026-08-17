@@ -76,11 +76,9 @@ fn folder_scan_and_multi_digest_verification() {
     #[cfg(unix)]
     std::os::unix::fs::symlink("a.txt", temporary.path().join("ignored-link")).unwrap();
 
-    let options = ScanOptions {
-        algorithms: vec![Algorithm::Blake3, Algorithm::Sha256],
-        parallel: true,
-        ..ScanOptions::default()
-    };
+    let options = ScanOptions::default()
+        .with_algorithms(vec![Algorithm::Blake3, Algorithm::Sha256])
+        .with_parallel(true);
     let scanned = scan_folder(temporary.path(), &options, &NoopObserver).unwrap();
     assert_eq!(scanned.manifest.entries.len(), 2);
     assert!(scanned

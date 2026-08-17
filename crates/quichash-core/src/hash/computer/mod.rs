@@ -202,6 +202,7 @@ impl HashComputer {
     ///
     /// If show_progress is true and the file is larger than 1GB and stdout is a TTY,
     /// displays a progress bar that updates 10 times per second.
+    #[allow(unsafe_code)]
     pub fn compute_multiple_hashes_with_progress(
         &self,
         path: &Path,

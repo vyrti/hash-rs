@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
+#![deny(unsafe_code)]
 
 // Legacy engines historically rendered their own status. Keep their public
 // compatibility methods quiet when embedded; the CLI owns presentation now.

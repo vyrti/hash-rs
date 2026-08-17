@@ -265,6 +265,7 @@ impl DigestValue {
 
 /// Information about a hash algorithm
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct AlgorithmInfo {
     /// Human-readable algorithm name.
     pub name: String,
