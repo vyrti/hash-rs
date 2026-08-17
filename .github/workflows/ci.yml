@@ -19,7 +19,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   BINARY_NAME: hash
-  EXPECTED_VERSION: 0.0.22
+  EXPECTED_VERSION: 0.1.0
 
 jobs:
   # ===================================================================
