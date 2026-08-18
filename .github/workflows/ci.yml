@@ -139,6 +139,10 @@ jobs:
             target/
           key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Set up QEMU
+        if: matrix.cross == true
+        uses: docker/setup-qemu-action@v3
+
       - name: Install cross
         if: matrix.cross == true
         uses: taiki-e/install-action@cross
