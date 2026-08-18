@@ -3,8 +3,6 @@ use quichash_core::error::HashUtilityError;
 use quichash_core::hash::Algorithm;
 use quichash_core::manifest::{Manifest, ManifestEntry};
 use quichash_core::operation::FailurePolicy;
-#[cfg(feature = "zstd")]
-use std::fs::File;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
 

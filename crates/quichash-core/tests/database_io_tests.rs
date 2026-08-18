@@ -2,10 +2,6 @@ use quichash_core::database::{DatabaseFormat, DatabaseHandler};
 use quichash_core::hash::Algorithm;
 use quichash_core::manifest::{Manifest, ManifestEntry};
 use std::fs;
-#[cfg(feature = "zstd")]
-use std::fs::File;
-#[cfg(feature = "zstd")]
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[allow(dead_code)]

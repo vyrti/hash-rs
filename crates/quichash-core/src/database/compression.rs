@@ -108,7 +108,7 @@ pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError>
 
         encoder.finish().map_err(|e| {
             HashUtilityError::from_io_error(
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                std::io::Error::other(e.to_string()),
                 "finalizing compression",
                 Some(output_path.clone()),
             )
