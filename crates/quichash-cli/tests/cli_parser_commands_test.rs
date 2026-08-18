@@ -309,7 +309,7 @@ fn test_parse_compare_command_with_all_options() {
 
 #[test]
 fn test_parse_compare_command_with_compressed_databases() {
-    let args = vec!["hash", "compare", "db1.txt.xz", "db2.txt.xz"];
+    let args = vec!["hash", "compare", "db1.txt.zst", "db2.txt.zst"];
     let cli = Cli::try_parse_from(args).unwrap();
 
     match cli.command {
@@ -319,8 +319,8 @@ fn test_parse_compare_command_with_compressed_databases() {
             output,
             format,
         }) => {
-            assert_eq!(database1, PathBuf::from("db1.txt.xz"));
-            assert_eq!(database2, PathBuf::from("db2.txt.xz"));
+            assert_eq!(database1, PathBuf::from("db1.txt.zst"));
+            assert_eq!(database2, PathBuf::from("db2.txt.zst"));
             assert_eq!(output, None);
             assert_eq!(format, "plain-text");
         }

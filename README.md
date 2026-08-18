@@ -21,7 +21,7 @@ library and the `quichash` CLI package, which installs the `hash` executable.
 - **Deduplication**: Find and report duplicate files based on hash comparison
 - **.hashignore**: Exclude files using gitignore-style patterns
 - **Formats**: QuicHash (`.qh`), hashdeep (`.hashdeep`), two-column checksum verification, JSON reports
-- **Compression**: LZMA compression for QuicHash databases (`.qh.xz`)
+- **Compression**: Zstandard compression for QuicHash databases (`.qh.zst`)
 - **Cross-Platform**: Linux, macOS, Windows, FreeBSD
 
 ## Installation
@@ -40,7 +40,7 @@ cargo build --release
 
 Applications should depend on `quichash-core` rather than copying its source.
 The default feature set includes all algorithms, folder operations, parallel
-processing, memory mapping, and XZ manifests. A small BLAKE3-only build can use
+processing, memory mapping, and Zstandard manifests. A small BLAKE3-only build can use
 `default-features = false, features = ["blake3"]`.
 
 ```rust
@@ -125,13 +125,39 @@ hash verify -b "*.qh" -d "data/*" --json               # Multiple databases/dirs
 ```
 
 ### Hash Text or Stdin
+# Custom algorithm
+hash myfile.txt -a sha256
 
-```bash
-hash --text "hello world" -a sha256          # Hash text
-cat myfile.txt | hash -a sha256              # Hash from stdin
+# Write output to file
+hash myfile.txt -b hash.txt
+
+# JSON output
+hash myfile.txt --json
 ```
 
+### Supported Algorithms
+
+| Algorithm | CLI Name | Output (bits) | Post-Quantum | Notes |
+|-----------|----------|---------------|--------------|-------|
+| BLAKE3 | `blake3` | 256 | Yes | **Default**, fastest secure hash |
+| XXH3-64 | `xxh3` | 64 | No | Maximum throughput, non-cryptographic |
+| XXH3-128 | `xxh128` | 128 | No | 128-bit xxHash3, non-cryptographic |
+| SHA-256 | `sha256` | 256 | Yes | Standard secure hash |
+| SHA-512 | `sha512` | 512 | Yes | High security, fast on 64-bit |
+| SHA-224 | `sha224` | 224 | Yes | Truncated SHA-256 |
+| SHA-384 | `sha384` | 384 | Yes | Truncated SHA-512 |
+| SHA-1 | `sha1` | 160 | No | Legacy compatibility only |
+| MD5 | `md5` | 128 | No | Legacy compatibility only |
+| SHA3-256 | `sha3-256` | 256 | Yes | Keccak-based standard |
+| SHA3-512 | `sha3-512` | 512 | Yes | Keccak-based standard |
+| SHA3-224 | `sha3-224` | 224 | Yes | Truncated SHA3-256 |
+| SHA3-384 | `sha3-384` | 384 | Yes | Truncated SHA3-512 |
+| BLAKE2b | `blake2b` | 512 | Yes | Fast 64-bit cryptographic hash |
+| BLAKE2s | `blake2s` | 256 | Yes | Fast 32-bit cryptographic hash |
+
 ### Scan Directory
+
+Recursively hashes all files in a directory:
 
 ```bash
 hash scan -d /path/to/dir -b hashes                            # Basic; creates hashes.qh
@@ -139,7 +165,7 @@ hash scan -d /path/to/dir -b hashes --hdd                      # Sequential for 
 hash scan -d /path/to/dir -a sha256 -b hashes                  # Custom algorithm
 hash scan -d /path/to/dir -b hashes -f                         # Fast mode
 hash scan -d /path/to/dir -b hashes -f --hdd                   # Fast mode, sequential
-hash scan -d /path/to/dir -b hashes --compress                 # Creates hashes.qh.xz
+hash scan -d /path/to/dir -b hashes --compress                 # Creates hashes.qh.zst
 hash scan -d /path/to/dir -b hashes --format hashdeep          # Creates hashes.hashdeep
 ```
 
@@ -150,13 +176,13 @@ hash verify -b hashes.qh -d /path/to/dir                      # Parallel (defaul
 hash verify -b hashes.qh -d /path/to/dir --hdd                # Sequential for old HDDs
 hash verify -b hashes.qh -d /path/to/dir --json               # JSON output
 hash verify -b checks.md5 -d /path/to/dir                     # GNU/generic checksum rows
-hash verify -b checks.blake3.xz -d /path/to/dir               # Compressed checksum file
+hash verify -b checks.blake3.zst -d /path/to/dir              # Compressed checksum file
 ```
 
 Verification accepts strict two-column checksum files in GNU text
 (`hash  path`), GNU binary (`hash *path`), or generic whitespace-separated
 form. The algorithm is inferred from a case-insensitive extension: `md5`,
-SHA-1/2/3 variants, BLAKE2b/s, BLAKE3, XXH3, or XXH128. A final `.xz` is
+SHA-1/2/3 variants, BLAKE2b/s, BLAKE3, XXH3, or XXH128. A final `.zst` or `.zstd` is
 ignored for algorithm inference. Blank and `#` comment lines are allowed, but
 malformed rows and unknown extensions fail verification. Creating these files
 with `scan` is not yet supported.
@@ -200,7 +226,7 @@ hash verify -b hashes.qh -d /path/to/dir --hdd
 
 ```bash
 hash verify -b hashes.qh -d /path/to/dir              # Verify
-hash verify -b hashes.qh.xz -d /path/to/dir           # Compressed
+hash verify -b hashes.qh.zst -d /path/to/dir          # Compressed
 hash verify -b hashes.qh -d /path/to/dir --json       # JSON
 ```
 
@@ -215,8 +241,8 @@ hash compare db1.qh db2.qh                            # Compare two databases
 hash compare db1.qh db2.qh -b report.txt              # Save report to file
 hash compare db1.qh db2.qh --format json              # JSON output
 hash compare db1.qh db2.qh --format hashdeep          # Hashdeep audit format
-hash compare db1.qh.xz db2.qh.xz                      # Compare compressed databases
-hash compare db1.qh db2.qh.xz                         # Mix compressed and plain
+hash compare db1.qh.zst db2.qh.zst                    # Compare compressed databases
+hash compare db1.qh db2.qh.zst                        # Mix compressed and plain
 ```
 
 Output shows:
@@ -234,7 +260,7 @@ Analyze a hash database to view statistics, duplicates, and potential space savi
 hash analyze -d hashes.qh                             # Analyze database
 hash analyze -d hashes.qh --json                      # JSON output
 hash analyze -d hashes.qh -b report.txt               # Save report to file
-hash analyze -d hashes.qh.xz                          # Analyze compressed database
+hash analyze -d hashes.qh.zst                         # Analyze compressed database
 ```
 
 Output shows:
@@ -281,16 +307,16 @@ hash list --json                  # JSON output
 | | `--hdd` | Sequential mode for old HDDs (default: parallel) |
 | | `-f, --fast` | Fast mode |
 | | `--format <FMT>` | quichash (default) or hashdeep |
-| | `--compress` | LZMA compression; QuicHash only |
+| | `--compress` | Zstandard compression; QuicHash only |
 | | `--json` | JSON output |
 | verify | `-b, --database <FILE>` | Database file or wildcard pattern |
 | | `-d, --directory <DIR>` | Directory or wildcard pattern to verify |
 | | `--json` | JSON output |
-| compare | `DATABASE1` | First database file (supports .xz) |
-| | `DATABASE2` | Second database file (supports .xz) |
+| compare | `DATABASE1` | First database file (supports .zst) |
+| | `DATABASE2` | Second database file (supports .zst) |
 | | `-b, --output <FILE>` | Write report to file |
 | | `--format <FMT>` | plain-text, json, or hashdeep |
-| analyze | `-d, --database <FILE>` | Database file to analyze (supports .xz) |
+| analyze | `-d, --database <FILE>` | Database file to analyze (supports .zst) |
 | | `-b, --output <FILE>` | Write report to file |
 | | `--json` | JSON output |
 | dedup | `-d, --directory <DIR>` | Directory to scan for duplicates |
@@ -351,9 +377,9 @@ Patterns: `*.ext`, `dir/`, `!pattern`, `#comments`, `**/*.ext`
 or `.blake3`; both GNU markers and generic whitespace separators are accepted.
 
 New scan paths are normalized by format: `-b hashes`, `hashes.txt`, or
-`hashes.db` create `hashes.qh`; `--compress` creates `hashes.qh.xz`; and
+`hashes.db` create `hashes.qh`; `--compress` creates `hashes.qh.zst`; and
 `--format hashdeep` creates `hashes.hashdeep`. Hashdeep compression is not
-supported for new scans. Legacy `.txt`, `.db`, `.hashdeep`, and `.xz` files
+supported for new scans. Legacy `.txt`, `.db`, `.hashdeep`, and `.zst` files
 remain readable because input format detection is content-based.
 
 ## Performance

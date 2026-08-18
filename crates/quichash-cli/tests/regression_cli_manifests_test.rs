@@ -1,10 +1,8 @@
 use std::fs;
-use std::io::Write;
 use std::process::Command;
 
 use serde_json::Value;
 use tempfile::tempdir;
-use xz2::write::XzEncoder;
 
 fn hash_bin() -> &'static str {
     env!("CARGO_BIN_EXE_hash")
@@ -57,7 +55,7 @@ fn verify_analyze_and_compare_accept_canonical_plain_and_compressed_databases() 
         assert_success(&output);
     }
 
-    let compressed = temporary.path().join("compressed.qh.xz");
+    let compressed = temporary.path().join("compressed.qh.zst");
     let verify = Command::new(hash_bin())
         .args(["verify", "-b"])
         .arg(&compressed)
@@ -125,14 +123,12 @@ fn cli_verifies_plain_compressed_and_mixed_checksum_files() {
         );
     }
 
-    let compressed = manifests.join("compressed.sha256.xz");
-    let mut encoder = XzEncoder::new(fs::File::create(&compressed).unwrap(), 6);
-    writeln!(
-        encoder,
-        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824 *file.txt"
-    )
-    .unwrap();
-    encoder.finish().unwrap();
+    let compressed = manifests.join("compressed.sha256.zst");
+    let compressed_data = structured_zstd::encoding::compress_to_vec(
+        &b"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824 *file.txt\n"[..],
+        structured_zstd::encoding::CompressionLevel::from_level(3),
+    );
+    fs::write(&compressed, compressed_data).unwrap();
     let output = Command::new(hash_bin())
         .args(["verify", "-b"])
         .arg(&compressed)

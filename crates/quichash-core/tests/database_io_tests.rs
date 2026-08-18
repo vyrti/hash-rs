@@ -1,7 +1,10 @@
 use quichash_core::database::{DatabaseFormat, DatabaseHandler};
 use quichash_core::hash::Algorithm;
 use quichash_core::manifest::{Manifest, ManifestEntry};
-use std::fs::{self, File};
+use std::fs;
+#[cfg(feature = "zstd")]
+use std::fs::File;
+#[cfg(feature = "zstd")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -21,19 +24,20 @@ fn sample_manifest() -> Manifest {
     }
 }
 
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 #[test]
-fn historical_xz_names_are_read_by_content() {
-    fn write_xz(path: &Path, content: &[u8]) {
-        let file = File::create(path).unwrap();
-        let mut encoder = xz2::write::XzEncoder::new(file, 6);
-        encoder.write_all(content).unwrap();
-        encoder.finish().unwrap();
+fn historical_compressed_names_are_read_by_content() {
+    fn write_zst(path: &Path, content: &[u8]) {
+        let compressed = structured_zstd::encoding::compress_to_vec(
+            content,
+            structured_zstd::encoding::CompressionLevel::from_level(3),
+        );
+        fs::write(path, compressed).unwrap();
     }
 
     let temporary = tempfile::tempdir().unwrap();
-    let quichash = temporary.path().join("legacy.txt.xz");
-    write_xz(
+    let quichash = temporary.path().join("legacy.txt.zst");
+    write_zst(
         &quichash,
         format!("{}  sha256  normal  file.txt\n", "02".repeat(32)).as_bytes(),
     );
@@ -42,8 +46,8 @@ fn historical_xz_names_are_read_by_content() {
         DatabaseFormat::Quichash,
     );
 
-    let hashdeep = temporary.path().join("historical.hashdeep.xz");
-    write_xz(
+    let hashdeep = temporary.path().join("historical.hashdeep.zst");
+    write_zst(
         &hashdeep,
         format!(
             "%%%% HASHDEEP-1.0\n%%%% size,sha256,filename\n5,{},file.txt\n",
@@ -56,8 +60,8 @@ fn historical_xz_names_are_read_by_content() {
         DatabaseFormat::Hashdeep,
     );
 
-    let arbitrary = temporary.path().join("arbitrary-name.xz");
-    write_xz(
+    let arbitrary = temporary.path().join("arbitrary-name.zst");
+    write_zst(
         &arbitrary,
         format!("{}  sha256  normal  file.txt\n", "02".repeat(32)).as_bytes(),
     );
@@ -70,7 +74,7 @@ fn historical_xz_names_are_read_by_content() {
     );
 }
 
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 #[test]
 fn write_manifest_file_round_trips_canonical_compressed_output() {
     let temporary = tempfile::tempdir().unwrap();
@@ -83,7 +87,7 @@ fn write_manifest_file_round_trips_canonical_compressed_output() {
     )
     .unwrap();
 
-    assert_eq!(actual, temporary.path().join("hashes.qh.xz"));
+    assert_eq!(actual, temporary.path().join("hashes.qh.zst"));
     assert!(!temporary.path().join("hashes.qh").exists());
     assert_eq!(
         DatabaseHandler::read_manifest(&actual).unwrap(),
@@ -91,7 +95,7 @@ fn write_manifest_file_round_trips_canonical_compressed_output() {
     );
 }
 
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 #[test]
 fn compression_failure_preserves_plain_quichash_database() {
     let temporary = tempfile::tempdir().unwrap();
@@ -101,13 +105,13 @@ fn compression_failure_preserves_plain_quichash_database() {
         format!("{}  sha256  normal  file.txt\n", "02".repeat(32)),
     )
     .unwrap();
-    fs::create_dir(temporary.path().join("hashes.qh.xz")).unwrap();
+    fs::create_dir(temporary.path().join("hashes.qh.zst")).unwrap();
 
     assert!(DatabaseHandler::compress_database(&plain).is_err());
     assert!(plain.is_file());
 }
 
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 #[test]
 fn compress_database_rejects_hashdeep_content() {
     let temporary = tempfile::tempdir().unwrap();
@@ -124,12 +128,12 @@ fn compress_database_rejects_hashdeep_content() {
     let error = DatabaseHandler::compress_database(&hashdeep).unwrap_err();
     assert!(error.to_string().contains("only QuicHash databases"));
     assert!(hashdeep.is_file());
-    assert!(!temporary.path().join("hashes.qh.xz").exists());
+    assert!(!temporary.path().join("hashes.qh.zst").exists());
 }
 
-#[cfg(not(feature = "xz"))]
+#[cfg(not(feature = "zstd"))]
 #[test]
-fn disabled_xz_feature_reports_error_and_preserves_plain_output() {
+fn disabled_zstd_feature_reports_error_and_preserves_plain_output() {
     let temporary = tempfile::tempdir().unwrap();
     let requested = temporary.path().join("hashes");
     assert!(DatabaseHandler::write_manifest_file(
@@ -140,7 +144,7 @@ fn disabled_xz_feature_reports_error_and_preserves_plain_output() {
     )
     .is_err());
     assert!(temporary.path().join("hashes.qh").is_file());
-    assert!(!temporary.path().join("hashes.qh.xz").exists());
+    assert!(!temporary.path().join("hashes.qh.zst").exists());
 }
 
 #[test]

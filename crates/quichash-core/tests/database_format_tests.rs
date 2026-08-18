@@ -3,7 +3,7 @@ use quichash_core::error::HashUtilityError;
 use quichash_core::hash::Algorithm;
 use quichash_core::manifest::{Manifest, ManifestEntry};
 use quichash_core::operation::FailurePolicy;
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 use std::fs::File;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
@@ -48,7 +48,8 @@ fn checksum_extensions_map_to_every_supported_algorithm() {
         ("checks.blake3", Algorithm::Blake3),
         ("checks.xxh3", Algorithm::Xxh3),
         ("checks.xxh128", Algorithm::Xxh128),
-        ("checks.SHA256.XZ", Algorithm::Sha256),
+        ("checks.SHA256.ZST", Algorithm::Sha256),
+        ("checks.sha256.zstd", Algorithm::Sha256),
     ];
     for (path, expected) in cases {
         assert_eq!(
@@ -141,16 +142,16 @@ fn checksum_manifest_is_strict_and_requires_known_extension() {
     ));
 }
 
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 #[test]
 fn checksum_manifest_reads_compressed_input() {
     let temporary = tempfile::tempdir().unwrap();
-    let checksum = temporary.path().join("checks.sha256.xz");
-    let file = File::create(&checksum).unwrap();
-    let mut encoder = xz2::write::XzEncoder::new(file, 6);
-    use std::io::Write;
-    writeln!(encoder, "{}  file.txt", "02".repeat(32)).unwrap();
-    encoder.finish().unwrap();
+    let checksum = temporary.path().join("checks.sha256.zst");
+    let compressed = structured_zstd::encoding::compress_to_vec(
+        format!("{}  file.txt\n", "02".repeat(32)).as_bytes(),
+        structured_zstd::encoding::CompressionLevel::from_level(3),
+    );
+    fs::write(&checksum, compressed).unwrap();
 
     let manifest = DatabaseHandler::read_checksum_manifest(&checksum).unwrap();
     assert_eq!(manifest.entries.len(), 1);
@@ -165,8 +166,8 @@ fn canonical_output_paths_replace_legacy_and_multiple_suffixes() {
         ("hashes.db", "hashes.qh"),
         ("hashes.qh", "hashes.qh"),
         ("hashes.backup.txt", "hashes.backup.qh"),
-        ("hashes.txt.xz", "hashes.qh"),
-        ("hashes.qh.xz", "hashes.qh"),
+        ("hashes.txt.zst", "hashes.qh"),
+        ("hashes.qh.zst", "hashes.qh"),
     ];
     for (requested, expected) in cases {
         assert_eq!(
@@ -181,12 +182,12 @@ fn canonical_output_paths_replace_legacy_and_multiple_suffixes() {
     }
     assert_eq!(
         DatabaseHandler::canonical_output_path(
-            Path::new("hashes.txt.xz"),
+            Path::new("hashes.txt.zst"),
             DatabaseFormat::Quichash,
             true,
         )
         .unwrap(),
-        PathBuf::from("hashes.qh.xz"),
+        PathBuf::from("hashes.qh.zst"),
     );
     assert_eq!(
         DatabaseHandler::canonical_output_path(

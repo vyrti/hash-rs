@@ -42,28 +42,7 @@ pub(crate) fn read_hashdeep_with_sizes(
 ) -> Result<HashMap<PathBuf, EntryWithSize>, HashUtilityError> {
     use std::io::BufRead;
 
-    let file = std::fs::File::open(path).map_err(|e| {
-        HashUtilityError::from_io_error(e, "opening database", Some(path.to_path_buf()))
-    })?;
-
-    let reader: Box<dyn BufRead> = if DatabaseHandler::is_compressed(path) {
-        #[cfg(feature = "xz")]
-        {
-            Box::new(std::io::BufReader::new(xz2::read::XzDecoder::new(file)))
-        }
-        #[cfg(not(feature = "xz"))]
-        {
-            let _ = file;
-            return Err(HashUtilityError::InvalidArguments {
-                message: format!(
-                    "reading '{}' requires the 'xz' Cargo feature",
-                    path.display()
-                ),
-            });
-        }
-    } else {
-        Box::new(std::io::BufReader::new(file))
-    };
+    let reader = crate::database::compression::open_database_reader(path)?;
 
     let mut entries = HashMap::new();
     let mut algorithms: Vec<String> = Vec::new();

@@ -2,10 +2,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "xz")]
-use xz2::read::XzDecoder;
-#[cfg(feature = "xz")]
-use xz2::write::XzEncoder;
+#[cfg(feature = "zstd")]
+use structured_zstd::decoding::StreamingDecoder;
+#[cfg(feature = "zstd")]
+use structured_zstd::encoding::{CompressionLevel, StreamingEncoder};
 
 use crate::error::HashUtilityError;
 
@@ -13,11 +13,11 @@ use super::DatabaseFormat;
 
 /// Return the canonical output path for a database.
 ///
-/// Any existing final extension is replaced. An existing `.xz` suffix is
-/// removed before normalization, so legacy names such as `hashes.txt.xz`
-/// become `hashes.qh` or `hashes.qh.xz` according to `compressed`.
+/// Any existing final extension is replaced. An existing `.zst` or `.zstd` suffix is
+/// removed before normalization, so legacy names such as `hashes.txt.zst`
+/// become `hashes.qh` or `hashes.qh.zst` according to `compressed`.
 /// QuicHash databases use `.qh`, compressed QuicHash databases use
-/// `.qh.xz`, and hashdeep databases use `.hashdeep`.
+/// `.qh.zst`, and hashdeep databases use `.hashdeep`.
 pub fn canonical_output_path(
     requested_path: &Path,
     format: DatabaseFormat,
@@ -35,28 +35,28 @@ pub fn canonical_output_path(
         output_path.set_extension("");
     }
     output_path.set_extension(match format {
-        DatabaseFormat::Quichash if compressed => "qh.xz",
+        DatabaseFormat::Quichash if compressed => "qh.zst",
         DatabaseFormat::Quichash => "qh",
         DatabaseFormat::Hashdeep => "hashdeep",
     });
     Ok(output_path)
 }
 
-/// Check if a path has .xz extension (compressed database)
+/// Check if a path has .zst or .zstd extension (compressed database)
 pub fn is_compressed(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("xz"))
+        .map(|ext| ext.eq_ignore_ascii_case("zst") || ext.eq_ignore_ascii_case("zstd"))
         .unwrap_or(false)
 }
 
-/// Compress a database file with LZMA.
+/// Compress a database file with Zstandard.
 ///
 /// The input must contain QuicHash rows and must not already be compressed.
-/// The output path is normalized to `.qh.xz`. When the `xz` feature is
+/// The output path is normalized to `.qh.zst`. When the `zstd` feature is
 /// disabled, this returns an explanatory error. Compression failures never
 /// remove the input file and clean up a newly-created partial output file.
-#[cfg(feature = "xz")]
+#[cfg(feature = "zstd")]
 pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError> {
     if is_compressed(input_path) {
         return Err(HashUtilityError::InvalidArguments {
@@ -92,8 +92,8 @@ pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError>
         )
     })?;
 
-    // Create LZMA encoder with compression level 6 (good balance of speed and compression)
-    let mut encoder = XzEncoder::new(output_file, 6);
+    // Create Zstandard encoder with default compression level (3)
+    let mut encoder = StreamingEncoder::new(output_file, CompressionLevel::from_level(3));
 
     // Copy data through the encoder
     let mut reader = BufReader::new(input_file);
@@ -107,7 +107,11 @@ pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError>
         })?;
 
         encoder.finish().map_err(|e| {
-            HashUtilityError::from_io_error(e, "finalizing compression", Some(output_path.clone()))
+            HashUtilityError::from_io_error(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                "finalizing compression",
+                Some(output_path.clone()),
+            )
         })?;
         Ok::<(), HashUtilityError>(())
     })();
@@ -119,35 +123,41 @@ pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError>
     Ok(output_path)
 }
 
-#[cfg(not(feature = "xz"))]
-/// Return an error explaining that XZ support was compiled out.
+#[cfg(not(feature = "zstd"))]
+/// Return an error explaining that Zstandard support was compiled out.
 pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError> {
     Err(HashUtilityError::InvalidArguments {
         message: format!(
-            "XZ compression for '{}' requires the 'xz' Cargo feature",
+            "Zstandard compression for '{}' requires the 'zstd' Cargo feature",
             input_path.display()
         ),
     })
 }
 
-/// Open a database file, automatically decompressing if it has .xz extension
+/// Open a database file, automatically decompressing if it has .zst / .zstd extension
 pub(crate) fn open_database_reader(path: &Path) -> Result<Box<dyn BufRead>, HashUtilityError> {
     let file = File::open(path).map_err(|e| {
         HashUtilityError::from_io_error(e, "opening database", Some(path.to_path_buf()))
     })?;
 
     if is_compressed(path) {
-        #[cfg(feature = "xz")]
+        #[cfg(feature = "zstd")]
         {
-            let decoder = XzDecoder::new(file);
+            let decoder = StreamingDecoder::new(BufReader::new(file)).map_err(|e| {
+                HashUtilityError::from_io_error(
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()),
+                    "opening compressed database",
+                    Some(path.to_path_buf()),
+                )
+            })?;
             Ok(Box::new(BufReader::new(decoder)))
         }
-        #[cfg(not(feature = "xz"))]
+        #[cfg(not(feature = "zstd"))]
         {
             let _ = file;
             Err(HashUtilityError::InvalidArguments {
                 message: format!(
-                    "reading '{}' requires the 'xz' Cargo feature",
+                    "reading '{}' requires the 'zstd' Cargo feature",
                     path.display()
                 ),
             })

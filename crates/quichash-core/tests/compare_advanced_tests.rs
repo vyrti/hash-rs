@@ -115,6 +115,7 @@ fn test_find_duplicates_with_duplicates() {
     assert_eq!(dup_group.paths.len(), 2);
 }
 
+#[cfg(feature = "zstd")]
 #[test]
 fn test_compare_compressed_databases() {
     // Create two plain text databases

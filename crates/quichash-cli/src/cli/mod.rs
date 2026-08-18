@@ -22,7 +22,7 @@ use std::path::PathBuf;
     hash scan -d /path/to/dir -b hashes                    # creates hashes.qh\n  \
     hash scan -d /path/to/dir -b hashes --hdd              # sequential for old HDDs\n  \
     hash scan -d /path/to/dir -b hashes --format hashdeep  # creates hashes.hashdeep\n  \
-    hash scan -d /path/to/dir -b hashes --compress         # creates hashes.qh.xz\n  \
+    hash scan -d /path/to/dir -b hashes --compress         # creates hashes.qh.zst\n  \
     hash scan -d /path/to/dir -b hashes --json             # JSON report on stdout\n  \
     hash verify -b hashes.qh -d /path/to/dir               # parallel by default\n  \
     hash verify -b hashes.qh -d /path/to/dir --hdd         # sequential for old HDDs\n  \
@@ -114,7 +114,7 @@ pub enum Command {
         #[arg(long = "json")]
         json: bool,
 
-        /// Compress QuicHash output with LZMA (creates a .qh.xz file)
+        /// Compress QuicHash output with Zstandard (creates a .qh.zst file)
         #[arg(long = "compress")]
         compress: bool,
     },
@@ -125,7 +125,7 @@ pub enum Command {
     /// modifications, deletions, and new files.
     Verify {
         /// Hash database file or wildcard pattern (e.g., *.qh, hashes?.qh)
-        /// Supports QuicHash, hashdeep, two-column checksum files, and compressed .xz formats
+        /// Supports QuicHash, hashdeep, two-column checksum files, and compressed .zst formats
         #[arg(short = 'b', long = "database", value_name = "FILE")]
         database: String,
 
@@ -170,13 +170,13 @@ pub enum Command {
     ///
     /// Compares two hash database files to identify unchanged files, changed files,
     /// moved files, removed files, and added files.
-    /// Supports QuicHash, hashdeep, and compressed (.xz) database formats.
+    /// Supports QuicHash, hashdeep, and compressed (.zst) database formats.
     Compare {
-        /// First hash database file path (supports .xz compressed files)
+        /// First hash database file path (supports .zst compressed files)
         #[arg(value_name = "DATABASE1")]
         database1: PathBuf,
 
-        /// Second hash database file path (supports .xz compressed files)
+        /// Second hash database file path (supports .zst compressed files)
         #[arg(value_name = "DATABASE2")]
         database2: PathBuf,
 
@@ -222,7 +222,7 @@ pub enum Command {
     /// file counts, duplicate detection, and potential space savings.
     /// File sizes are only available for hashdeep format databases.
     Analyze {
-        /// Hash database file path (supports .xz compressed files)
+        /// Hash database file path (supports .zst compressed files)
         #[arg(short = 'd', long = "database", value_name = "FILE")]
         database: PathBuf,
 

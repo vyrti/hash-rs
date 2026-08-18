@@ -96,12 +96,12 @@ impl DatabaseHandler {
         manifest_io::write_manifest_file(requested_path, manifest, format, compressed)
     }
 
-    /// Check if a path has .xz extension (compressed database)
+    /// Check if a path has .zst or .zstd extension (compressed database)
     pub fn is_compressed(path: &Path) -> bool {
         compression::is_compressed(path)
     }
 
-    /// Compress a database file with LZMA.
+    /// Compress a database file with Zstandard.
     pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError> {
         compression::compress_database(input_path)
     }

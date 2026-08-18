@@ -230,7 +230,7 @@ pub fn write_manifest(
 /// Write a manifest to its canonical database path.
 ///
 /// The returned path is the actual file created. Compressed output is
-/// written first as a plain `.qh` file and removed only after the `.qh.xz`
+/// written first as a plain `.qh` file and removed only after the `.qh.zst`
 /// file has been completed successfully. This leaves the readable plain
 /// database in place if compression fails.
 pub fn write_manifest_file(

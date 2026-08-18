@@ -18,7 +18,7 @@ High-performance cryptographic hash utility with SIMD optimization. Installs the
 - **Deduplication**: Find and report duplicate files based on hash comparison
 - **.hashignore**: Exclude files using gitignore-style patterns
 - **Formats**: QuicHash (`.qh`), hashdeep (`.hashdeep`), two-column checksum verification, JSON reports
-- **Compression**: LZMA compression for QuicHash databases (`.qh.xz`)
+- **Compression**: Zstandard compression for QuicHash databases (`.qh.zst`)
 - **Cross-Platform**: Linux, macOS, Windows, FreeBSD
 
 ## Installation
@@ -74,16 +74,16 @@ hash list
 | | `--hdd` | Sequential mode for old HDDs (default: parallel) |
 | | `-f, --fast` | Fast mode |
 | | `--format <FMT>` | quichash (default) or hashdeep |
-| | `--compress` | LZMA compression; QuicHash only |
+| | `--compress` | Zstandard compression; QuicHash only |
 | | `--json` | JSON output |
 | verify | `-b, --database <FILE>` | Database file or wildcard pattern |
 | | `-d, --directory <DIR>` | Directory or wildcard pattern to verify |
 | | `--json` | JSON output |
-| compare | `DATABASE1` | First database file (supports .xz) |
-| | `DATABASE2` | Second database file (supports .xz) |
+| compare | `DATABASE1` | First database file (supports .zst) |
+| | `DATABASE2` | Second database file (supports .zst) |
 | | `-b, --output <FILE>` | Write report to file |
 | | `--format <FMT>` | plain-text, json, or hashdeep |
-| analyze | `-d, --database <FILE>` | Database file to analyze (supports .xz) |
+| analyze | `-d, --database <FILE>` | Database file to analyze (supports .zst) |
 | | `-b, --output <FILE>` | Write report to file |
 | | `--json` | JSON output |
 | dedup | `-d, --directory <DIR>` | Directory to scan for duplicates |

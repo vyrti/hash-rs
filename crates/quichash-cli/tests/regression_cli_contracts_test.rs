@@ -35,7 +35,7 @@ fn scan_normalizes_requested_database_extensions() {
         ("hashes", "hashes.qh"),
         ("legacy.txt", "legacy.qh"),
         ("legacy.db", "legacy.qh"),
-        ("old.txt.xz", "old.qh"),
+        ("old.txt.zst", "old.qh"),
     ] {
         let temporary = tempdir().unwrap();
         fs::write(temporary.path().join("file.bin"), b"data").unwrap();
@@ -79,7 +79,7 @@ fn scan_supports_explicit_quichash_and_canonical_hashdeep_paths() {
 }
 
 #[test]
-fn compressed_scan_creates_only_canonical_qh_xz_output() {
+fn compressed_scan_creates_only_canonical_qh_zst_output() {
     let temporary = tempdir().unwrap();
     fs::write(temporary.path().join("file.bin"), b"data").unwrap();
     let output = Command::new(hash_bin())
@@ -91,8 +91,8 @@ fn compressed_scan_creates_only_canonical_qh_xz_output() {
         .unwrap();
     assert_success(&output);
     let json = parse_stdout_json(&output);
-    assert_eq!(json["metadata"]["output_file"], "hashes.qh.xz");
-    assert!(temporary.path().join("hashes.qh.xz").is_file());
+    assert_eq!(json["metadata"]["output_file"], "hashes.qh.zst");
+    assert!(temporary.path().join("hashes.qh.zst").is_file());
     assert!(!temporary.path().join("hashes.qh").exists());
     assert!(!temporary.path().join("hashes.txt").exists());
 }

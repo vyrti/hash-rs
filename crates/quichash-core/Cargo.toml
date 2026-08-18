@@ -1,6 +1,6 @@
 [package]
 name = "quichash-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.95"
 description = "Reusable hashing, manifest, and verification engine for QuicHash"
@@ -13,7 +13,7 @@ keywords = ["hash", "manifest", "crypto", "blake3", "checksum"]
 categories = ["cryptography", "filesystem"]
 
 [features]
-default = ["all-algorithms", "filesystem", "parallel", "mmap", "xz", "reporting"]
+default = ["all-algorithms", "filesystem", "parallel", "mmap", "zstd", "reporting"]
 all-algorithms = ["md5", "sha1", "sha2", "sha3", "blake2", "blake3", "xxhash"]
 md5 = ["dep:md-5"]
 sha1 = ["dep:sha1"]
@@ -25,7 +25,7 @@ xxhash = ["dep:xxhash-rust"]
 filesystem = ["dep:crossbeam-channel", "dep:glob", "dep:ignore", "dep:jwalk"]
 parallel = ["dep:rayon", "blake3?/rayon"]
 mmap = ["dep:memmap2", "blake3?/mmap"]
-xz = ["dep:xz2"]
+zstd = ["dep:structured-zstd"]
 reporting = ["dep:chrono", "dep:serde_json"]
 
 [dependencies]
@@ -44,8 +44,8 @@ serde_json = { version = "1.0", optional = true }
 sha1 = { version = "0.11", optional = true }
 sha2 = { version = "0.11", optional = true }
 sha3 = { version = "0.12", optional = true }
+structured-zstd = { version = "0.0.49", optional = true }
 xxhash-rust = { version = "0.8", features = ["xxh3"], optional = true }
-xz2 = { version = "0.1", optional = true }
 
 [dev-dependencies]
 hex = "0.4"

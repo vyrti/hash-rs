@@ -49,7 +49,7 @@ The default feature set enables every feature below.
 | `filesystem` | Folder scanning, verification, ignore files, deduplication, and wildcard expansion |
 | `parallel` | Rayon-powered folder work and BLAKE3 parallel support |
 | `mmap` | Memory-mapped BLAKE3 file hashing |
-| `xz` | Reading and creating XZ-compressed manifest files |
+| `zstd` | Reading and creating Zstandard-compressed manifest files |
 | `reporting` | JSON and timestamp support used by analysis and comparison reports |
 
 Calling an algorithm that was compiled out returns
@@ -225,9 +225,9 @@ Call [`Manifest::canonicalize`] before custom serialization, or
   for the same path are merged into one multi-digest entry.
 - **hashdeep (`.hashdeep`):** `size,hash1,hash2,...,filename`, preserving every algorithm
   column declared by the header.
-- **XZ:** existing text databases can be read transparently from any `.xz`
-  path when `xz` is enabled. New compression is limited to QuicHash content
-  and creates `.qh.xz`.
+- **Zstandard:** existing text databases can be read transparently from any `.zst`
+  or `.zstd` path when `zstd` is enabled. New compression is limited to QuicHash content
+  and creates `.qh.zst`.
 
 ```no_run
 use std::path::Path;
@@ -245,7 +245,7 @@ assert_eq!(actual_path, Path::new("converted.qh"));
 ```
 
 [`DatabaseHandler::canonical_output_path`](database::DatabaseHandler::canonical_output_path)
-normalizes requested output names to `.qh`, `.qh.xz`, or `.hashdeep`.
+normalizes requested output names to `.qh`, `.qh.zst`, or `.hashdeep`.
 [`DatabaseHandler::write_manifest_file`](database::DatabaseHandler::write_manifest_file)
 writes to that canonical path and returns it. On compression failure the plain
 `.qh` file is retained. [`DatabaseHandler::write_manifest`](database::DatabaseHandler::write_manifest)
@@ -253,13 +253,13 @@ and the row writers remain available when an application intentionally owns
 its filenames and output streams.
 
 Reading remains content-based for compatibility, so legacy uncompressed
-`.txt` and `.db` manifests and historical `.txt.xz` or `.hashdeep.xz` files
+`.txt` and `.db` manifests and historical `.txt.zst` or `.hashdeep.zst` files
 continue to work.
 
 Verification can additionally read conventional two-column checksum files
 with [`DatabaseHandler::read_checksum_manifest`](database::DatabaseHandler::read_checksum_manifest).
 The algorithm is inferred from extensions such as `.md5`, `.sha256`, or
-`.blake3` (optionally followed by `.xz`). Parsing accepts GNU text/binary
+`.blake3` (optionally followed by `.zst` or `.zstd`). Parsing accepts GNU text/binary
 markers and generic whitespace separators, and fails on malformed rows. This
 format is verification-only and is not accepted by manifest writers, analysis,
 or comparison.
