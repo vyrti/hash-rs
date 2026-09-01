@@ -328,9 +328,161 @@ impl Hasher for Xxh128Wrapper {
     }
 }
 
+// Keeping states inline avoids one heap allocation per algorithm per file. The
+// largest state determines the enum size, which is an intentional tradeoff for
+// the tiny-file workload.
+#[allow(clippy::large_enum_variant)]
+enum HasherState {
+    #[cfg(feature = "md5")]
+    Md5(Md5),
+    #[cfg(feature = "sha1")]
+    Sha1(Sha1),
+    #[cfg(feature = "sha2")]
+    Sha224(Sha224),
+    #[cfg(feature = "sha2")]
+    Sha256(Sha256),
+    #[cfg(feature = "sha2")]
+    Sha384(Sha384),
+    #[cfg(feature = "sha2")]
+    Sha512(Sha512),
+    #[cfg(feature = "sha3")]
+    Sha3_224(Sha3_224),
+    #[cfg(feature = "sha3")]
+    Sha3_256(Sha3_256),
+    #[cfg(feature = "sha3")]
+    Sha3_384(Sha3_384),
+    #[cfg(feature = "sha3")]
+    Sha3_512(Sha3_512),
+    #[cfg(feature = "blake2")]
+    Blake2b512(Blake2b512),
+    #[cfg(feature = "blake2")]
+    Blake2s256(Blake2s256),
+    #[cfg(feature = "blake3")]
+    Blake3(Blake3Hasher),
+    #[cfg(feature = "xxhash")]
+    Xxh3(Xxh3Hasher),
+    #[cfg(feature = "xxhash")]
+    Xxh128(Xxh3HasherBase),
+}
+
+impl HasherState {
+    fn new(algorithm: Algorithm) -> Result<Self, HashUtilityError> {
+        #[allow(unreachable_patterns)]
+        match algorithm {
+            #[cfg(feature = "md5")]
+            Algorithm::Md5 => Ok(Self::Md5(Md5::default())),
+            #[cfg(feature = "sha1")]
+            Algorithm::Sha1 => Ok(Self::Sha1(Sha1::default())),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha224 => Ok(Self::Sha224(Sha224::default())),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha256 => Ok(Self::Sha256(Sha256::default())),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha384 => Ok(Self::Sha384(Sha384::default())),
+            #[cfg(feature = "sha2")]
+            Algorithm::Sha512 => Ok(Self::Sha512(Sha512::default())),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_224 => Ok(Self::Sha3_224(Sha3_224::default())),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_256 => Ok(Self::Sha3_256(Sha3_256::default())),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_384 => Ok(Self::Sha3_384(Sha3_384::default())),
+            #[cfg(feature = "sha3")]
+            Algorithm::Sha3_512 => Ok(Self::Sha3_512(Sha3_512::default())),
+            #[cfg(feature = "blake2")]
+            Algorithm::Blake2b512 => Ok(Self::Blake2b512(Blake2b512::default())),
+            #[cfg(feature = "blake2")]
+            Algorithm::Blake2s256 => Ok(Self::Blake2s256(Blake2s256::default())),
+            #[cfg(feature = "blake3")]
+            Algorithm::Blake3 => Ok(Self::Blake3(Blake3Hasher::new())),
+            #[cfg(feature = "xxhash")]
+            Algorithm::Xxh3 => Ok(Self::Xxh3(Xxh3Hasher::new())),
+            #[cfg(feature = "xxhash")]
+            Algorithm::Xxh128 => Ok(Self::Xxh128(Xxh3HasherBase::new())),
+            unavailable => Err(HashUtilityError::AlgorithmUnavailable {
+                algorithm: unavailable.to_string(),
+                feature: unavailable.required_feature(),
+            }),
+        }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        let _ = data;
+        #[allow(unreachable_patterns)]
+        match self {
+            #[cfg(feature = "md5")]
+            Self::Md5(hasher) => Md5Digest::update(hasher, data),
+            #[cfg(feature = "sha1")]
+            Self::Sha1(hasher) => Sha1Digest::update(hasher, data),
+            #[cfg(feature = "sha2")]
+            Self::Sha224(hasher) => Sha2Digest::update(hasher, data),
+            #[cfg(feature = "sha2")]
+            Self::Sha256(hasher) => Sha2Digest::update(hasher, data),
+            #[cfg(feature = "sha2")]
+            Self::Sha384(hasher) => Sha2Digest::update(hasher, data),
+            #[cfg(feature = "sha2")]
+            Self::Sha512(hasher) => Sha2Digest::update(hasher, data),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_224(hasher) => Sha3Digest::update(hasher, data),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_256(hasher) => Sha3Digest::update(hasher, data),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_384(hasher) => Sha3Digest::update(hasher, data),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_512(hasher) => Sha3Digest::update(hasher, data),
+            #[cfg(feature = "blake2")]
+            Self::Blake2b512(hasher) => Blake2Digest::update(hasher, data),
+            #[cfg(feature = "blake2")]
+            Self::Blake2s256(hasher) => Blake2Digest::update(hasher, data),
+            #[cfg(feature = "blake3")]
+            Self::Blake3(hasher) => {
+                hasher.update(data);
+            }
+            #[cfg(feature = "xxhash")]
+            Self::Xxh3(hasher) | Self::Xxh128(hasher) => hasher.update(data),
+            _ => unreachable!("an unavailable hasher cannot be constructed"),
+        }
+    }
+
+    fn finalize(self) -> Vec<u8> {
+        match self {
+            #[cfg(feature = "md5")]
+            Self::Md5(hasher) => Md5Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha1")]
+            Self::Sha1(hasher) => Sha1Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha2")]
+            Self::Sha224(hasher) => Sha2Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha2")]
+            Self::Sha256(hasher) => Sha2Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha2")]
+            Self::Sha384(hasher) => Sha2Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha2")]
+            Self::Sha512(hasher) => Sha2Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_224(hasher) => Sha3Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_256(hasher) => Sha3Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_384(hasher) => Sha3Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "sha3")]
+            Self::Sha3_512(hasher) => Sha3Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "blake2")]
+            Self::Blake2b512(hasher) => Blake2Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "blake2")]
+            Self::Blake2s256(hasher) => Blake2Digest::finalize(hasher).to_vec(),
+            #[cfg(feature = "blake3")]
+            Self::Blake3(hasher) => hasher.finalize().as_bytes().to_vec(),
+            #[cfg(feature = "xxhash")]
+            Self::Xxh3(hasher) => hasher.digest().to_le_bytes().to_vec(),
+            #[cfg(feature = "xxhash")]
+            Self::Xxh128(hasher) => hasher.digest128().to_le_bytes().to_vec(),
+        }
+    }
+}
+
 /// A collection of streaming hashers updated from the same byte stream.
 pub struct HasherSet {
-    hashers: Vec<(Algorithm, Box<dyn Hasher>)>,
+    hashers: Vec<(Algorithm, HasherState)>,
 }
 
 impl HasherSet {
@@ -341,7 +493,7 @@ impl HasherSet {
     pub fn new(algorithms: &[Algorithm]) -> Result<Self, HashUtilityError> {
         let mut hashers = Vec::with_capacity(algorithms.len());
         for &algorithm in algorithms {
-            hashers.push((algorithm, algorithm.hasher()?));
+            hashers.push((algorithm, HasherState::new(algorithm)?));
         }
         Ok(Self { hashers })
     }
@@ -367,5 +519,11 @@ impl HasherSet {
 
 /// Convert bytes to hexadecimal string
 pub(crate) fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }

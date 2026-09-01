@@ -16,10 +16,38 @@ use super::HashComputer;
 use crate::error::HashUtilityError;
 
 impl HashComputer {
+    /// Hash one file from an outer file-parallel pipeline. The caller owns a
+    /// reusable buffer, and this method deliberately avoids nested Rayon work.
+    #[cfg(feature = "filesystem")]
+    #[allow(unsafe_code)]
+    pub(crate) fn compute_hash_for_worker(
+        &self,
+        path: &Path,
+        algorithm: &str,
+        fast_mode: bool,
+        file_size: u64,
+        buffer: &mut [u8],
+    ) -> Result<HashResult, HashUtilityError> {
+        let parsed = Algorithm::from_str(algorithm)?;
+        let mode = if fast_mode {
+            super::super::HashMode::Sampled
+        } else {
+            super::super::HashMode::Full
+        };
+        let digest =
+            super::super::file::hash_file_mode_worker(path, &[parsed], mode, file_size, buffer)?
+                .remove(0);
+        Ok(HashResult {
+            algorithm: algorithm.to_owned(),
+            hash: digest.to_hex(),
+            file_path: path.to_owned(),
+        })
+    }
+
     /// Compute hash for a single file using streaming I/O or memory mapping
     ///
-    /// For files smaller than 2GB, uses memory mapping to avoid kernel-to-userspace copy overhead.
-    /// For files larger than 2GB, falls back to buffered reading with 1MB buffer.
+    /// Uses buffered I/O for small files and memory mapping for larger files on
+    /// 64-bit targets. 32-bit targets cap mappings at 2 GiB.
     ///
     /// # Safety
     ///
@@ -58,7 +86,7 @@ impl HashComputer {
         let mut hasher = HashRegistry::get_hasher(algorithm)?;
 
         // Open file for reading with better error context
-        let file = File::open(path)
+        let file = super::super::io_strategy::open(path, super::super::HashMode::Full)
             .map_err(|e| HashUtilityError::from_io_error(e, "reading", Some(path.to_path_buf())))?;
 
         // Get file size to determine whether to use memory mapping
@@ -73,10 +101,10 @@ impl HashComputer {
         let should_show_progress =
             show_progress && file_size > PROGRESS_BAR_THRESHOLD && std::io::stdout().is_terminal();
 
-        // Use memory mapping for files smaller than 2GB when requested.
+        // Use memory mapping only when it amortizes mapping/page-fault overhead.
         #[cfg(feature = "mmap")]
         {
-            if file_size > 0 && file_size < MMAP_THRESHOLD {
+            if (MMAP_MIN_SIZE..MMAP_THRESHOLD).contains(&file_size) {
                 // Try to memory map the file
                 match unsafe { Mmap::map(&file) } {
                     Ok(mmap) => {
@@ -99,7 +127,7 @@ impl HashComputer {
                     }
                 }
             } else {
-                // Use buffered reading for large files (>2GB) or empty files
+                // Use buffered reading outside the platform's mapping range.
                 if should_show_progress {
                     self.hash_with_buffered_io_progress(&mut hasher, file, path, file_size)?;
                 } else {
@@ -221,7 +249,7 @@ impl HashComputer {
         let mut hasher = HashRegistry::get_hasher(algorithm)?;
 
         // Open file for reading with better error context
-        let mut file = File::open(path)
+        let mut file = super::super::io_strategy::open(path, super::super::HashMode::Sampled)
             .map_err(|e| HashUtilityError::from_io_error(e, "reading", Some(path.to_path_buf())))?;
 
         // Get file size
@@ -248,13 +276,22 @@ impl HashComputer {
             // Sample three regions: first 100MB, middle 100MB, last 100MB
 
             // Read first 100MB
-            self.read_region(&mut file, &mut hasher, 0, FAST_MODE_SAMPLE_SIZE, path)?;
+            let mut buffer = vec![0_u8; self.buffer_size];
+            self.read_region(
+                &mut file,
+                &mut hasher,
+                &mut buffer,
+                0,
+                FAST_MODE_SAMPLE_SIZE,
+                path,
+            )?;
 
             // Calculate middle region: centered at file_size/2
             let middle_start = (file_size / 2).saturating_sub(FAST_MODE_SAMPLE_SIZE / 2);
             self.read_region(
                 &mut file,
                 &mut hasher,
+                &mut buffer,
                 middle_start,
                 FAST_MODE_SAMPLE_SIZE,
                 path,
@@ -265,6 +302,7 @@ impl HashComputer {
             self.read_region(
                 &mut file,
                 &mut hasher,
+                &mut buffer,
                 last_start,
                 FAST_MODE_SAMPLE_SIZE,
                 path,
@@ -287,6 +325,7 @@ impl HashComputer {
         &self,
         file: &mut File,
         hasher: &mut Box<dyn Hasher>,
+        buffer: &mut [u8],
         start: u64,
         length: u64,
         path: &Path,
@@ -296,7 +335,6 @@ impl HashComputer {
             .map_err(|e| HashUtilityError::from_io_error(e, "seeking", Some(path.to_path_buf())))?;
 
         // Read up to 'length' bytes
-        let mut buffer = vec![0u8; self.buffer_size];
         let mut bytes_remaining = length;
 
         while bytes_remaining > 0 {

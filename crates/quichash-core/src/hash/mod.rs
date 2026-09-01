@@ -9,6 +9,7 @@ pub(crate) mod algorithm;
 pub(crate) mod computer;
 pub(crate) mod file;
 pub(crate) mod hasher;
+pub(crate) mod io_strategy;
 pub(crate) mod registry;
 
 pub use algorithm::{Algorithm, AlgorithmInfo, DigestValue, HashMode};

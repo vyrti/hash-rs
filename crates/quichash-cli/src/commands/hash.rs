@@ -87,19 +87,20 @@ pub fn handle_hash_command(
             fast_mode: bool,
         }
 
+        let file_count = {
+            use std::collections::HashSet;
+            results
+                .iter()
+                .map(|result| &result.file_path)
+                .collect::<HashSet<_>>()
+                .len()
+        };
         let output = HashOutput {
-            files: results.clone(),
+            files: results,
             metadata: HashMetadata {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 algorithms: algorithms.to_vec(),
-                file_count: {
-                    use std::collections::HashSet;
-                    results
-                        .iter()
-                        .map(|result| result.file_path.clone())
-                        .collect::<HashSet<_>>()
-                        .len()
-                },
+                file_count,
                 fast_mode: fast,
             },
         };

@@ -1,6 +1,7 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -14,7 +15,6 @@ use crate::error::HashUtilityError;
 use crate::hash::HashComputer;
 use crate::ignore_handler::IgnoreHandler;
 use crate::operation::{LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle};
-use crate::path_utils;
 
 /// Parallel scan implementation using producer-consumer pattern with jwalk and crossbeam-channel
 #[allow(clippy::too_many_arguments)]
@@ -30,10 +30,10 @@ pub(crate) fn scan_parallel(
     start_time: Instant,
 ) -> Result<super::ScanStats, super::ScanError> {
     // Thread-safe counters for progress tracking
-    let files_processed = Arc::new(Mutex::new(0usize));
-    let files_failed = Arc::new(Mutex::new(0usize));
-    let files_skipped = Arc::new(Mutex::new(0usize));
-    let total_bytes = Arc::new(Mutex::new(0u64));
+    let files_processed = Arc::new(AtomicUsize::new(0));
+    let files_failed = Arc::new(AtomicUsize::new(0));
+    let files_skipped = Arc::new(AtomicUsize::new(0));
+    let total_bytes = Arc::new(AtomicU64::new(0));
 
     // Create progress bar (we'll update the style once discovery is complete)
     let pb = ProgressBar::new(0);
@@ -47,10 +47,48 @@ pub(crate) fn scan_parallel(
 
     // Create bounded channel with backpressure (buffer size: 10000 entries)
     let (sender, receiver) = bounded::<PathBuf>(10000);
+    let (result_sender, result_receiver) = bounded::<(String, PathBuf, u64)>(10000);
+    let writer_output = output.to_owned();
+    let writer_algorithm = algorithm.to_owned();
+    let writer_handle = thread::spawn(move || -> Result<(), HashUtilityError> {
+        let output_file = File::create(&writer_output).map_err(|error| {
+            HashUtilityError::from_io_error(
+                error,
+                "creating output file",
+                Some(writer_output.clone()),
+            )
+        })?;
+        let mut writer = BufWriter::new(output_file);
+        if format == DatabaseFormat::Hashdeep {
+            DatabaseHandler::write_hashdeep_header(
+                &mut writer,
+                std::slice::from_ref(&writer_algorithm),
+            )?;
+        }
+        for (hash, path, size) in result_receiver {
+            match format {
+                DatabaseFormat::Quichash => DatabaseHandler::write_entry(
+                    &mut writer,
+                    &hash,
+                    &writer_algorithm,
+                    fast_mode,
+                    &path,
+                )?,
+                DatabaseFormat::Hashdeep => DatabaseHandler::write_hashdeep_entry(
+                    &mut writer,
+                    size,
+                    std::slice::from_ref(&hash),
+                    &path,
+                )?,
+            }
+        }
+        writer.flush().map_err(|error| {
+            HashUtilityError::from_io_error(error, "flushing output file", Some(writer_output))
+        })
+    });
 
     // Track total files discovered
     let total_files_discovered = Arc::new(Mutex::new(0usize));
-    let discovery_complete = Arc::new(Mutex::new(false));
 
     // Clone canonical_root and output_absolute for the walker thread
     let walker_root = canonical_root.to_path_buf();
@@ -59,7 +97,6 @@ pub(crate) fn scan_parallel(
 
     // Clone for walker thread
     let total_files_discovered_walker = Arc::clone(&total_files_discovered);
-    let discovery_complete_walker = Arc::clone(&discovery_complete);
     let pb_walker = pb.clone();
 
     // Spawn walker thread using jwalk to traverse directories
@@ -82,8 +119,6 @@ pub(crate) fn scan_parallel(
                 .unwrap()
                 .progress_chars("=>-")
         );
-        *discovery_complete_walker.lock().unwrap() = true;
-
         result
     });
 
@@ -97,83 +132,68 @@ pub(crate) fn scan_parallel(
 
     // Use rayon's par_bridge to consume from channel in parallel
     // This starts hashing immediately as files are discovered
-    let results: Vec<_> = receiver
+    receiver
         .into_iter()
         .par_bridge()
-        .filter_map(|file_path| {
-            // Check if file still exists and is accessible before processing
-            let metadata_check = fs::metadata(&file_path);
-            if metadata_check.is_err() {
-                let mut skipped = files_skipped_clone.lock().unwrap();
-                *skipped += 1;
-                pb_clone.inc(1);
-                return None;
-            }
-
-            // Update progress bar with counts instead of filename to avoid encoding issues
-            let processed = files_processed_clone.lock().unwrap();
-            let failed = files_failed_clone.lock().unwrap();
-            let skipped = files_skipped_clone.lock().unwrap();
-            pb_clone.set_message(format!(
-                "{} OK, {} failed, {} skipped",
-                *processed, *failed, *skipped
-            ));
-            drop(processed);
-            drop(failed);
-            drop(skipped);
-
-            // Compute hash for the file (using fast mode if enabled)
-            let computer = HashComputer::new();
-            let hash_result = if fast_mode {
-                computer.compute_hash_fast(&file_path, algorithm)
-            } else {
-                computer.compute_hash(&file_path, algorithm)
-            };
-
-            let result = match hash_result {
-                Ok(result) => {
-                    // Try to get relative path for cleaner database entries
-                    // Use cached version since canonical_root_clone is already canonicalized
-                    let path_to_write = match path_utils::get_relative_path_cached(
-                        &file_path,
-                        &canonical_root_clone,
-                    ) {
-                        Ok(rel_path) => rel_path,
-                        Err(_) => file_path.clone(),
-                    };
-
-                    // Preserve the size before replacing the absolute path
-                    // with its manifest-relative representation.
-                    let file_size = fs::metadata(&file_path)
-                        .map(|metadata| metadata.len())
-                        .unwrap_or(0);
-                    if file_size > 0 {
-                        let mut bytes = total_bytes_clone.lock().unwrap();
-                        *bytes += file_size;
+        .map_init(
+            || (HashComputer::new(), vec![0_u8; 1024 * 1024]),
+            |(computer, buffer), file_path| {
+                // Check if file still exists and is accessible before processing
+                let metadata = match fs::metadata(&file_path) {
+                    Ok(metadata) => metadata,
+                    Err(_) => {
+                        files_skipped_clone.fetch_add(1, Ordering::Relaxed);
+                        pb_clone.inc(1);
+                        return None;
                     }
+                };
+                let file_size = metadata.len();
 
-                    // Update success counter
-                    let mut processed = files_processed_clone.lock().unwrap();
-                    *processed += 1;
+                // Compute hash for the file (using fast mode if enabled)
+                let hash_result = computer
+                    .compute_hash_for_worker(&file_path, algorithm, fast_mode, file_size, buffer);
 
-                    Some((result.hash, path_to_write, file_size))
-                }
-                Err(e) => {
-                    // Log error but continue processing
-                    eprintln!("Warning: Failed to hash {}: {}", file_path.display(), e);
+                let result = match hash_result {
+                    Ok(result) => {
+                        // Try to get relative path for cleaner database entries
+                        // Use cached version since canonical_root_clone is already canonicalized
+                        let path_to_write = file_path
+                            .strip_prefix(&canonical_root_clone)
+                            .map(Path::to_path_buf)
+                            .unwrap_or_else(|_| file_path.clone());
 
-                    // Update failure counter
-                    let mut failed = files_failed_clone.lock().unwrap();
-                    *failed += 1;
+                        // Preserve the size before replacing the absolute path
+                        // with its manifest-relative representation.
+                        if file_size > 0 {
+                            total_bytes_clone.fetch_add(file_size, Ordering::Relaxed);
+                        }
 
-                    None
-                }
-            };
+                        // Update success counter
+                        files_processed_clone.fetch_add(1, Ordering::Relaxed);
 
-            pb_clone.inc(1);
-            result
-        })
-        .collect();
+                        Some((result.hash, path_to_write, file_size))
+                    }
+                    Err(e) => {
+                        // Log error but continue processing
+                        eprintln!("Warning: Failed to hash {}: {}", file_path.display(), e);
+
+                        // Update failure counter
+                        files_failed_clone.fetch_add(1, Ordering::Relaxed);
+
+                        None
+                    }
+                };
+
+                pb_clone.inc(1);
+                result
+            },
+        )
+        .for_each(|result| {
+            if let Some(result) = result {
+                let _ = result_sender.send(result);
+            }
+        });
+    drop(result_sender);
 
     // Wait for walker thread to complete
     match walker_handle.join() {
@@ -187,57 +207,27 @@ pub(crate) fn scan_parallel(
         }
     }
 
+    match writer_handle.join() {
+        Ok(result) => result?,
+        Err(panic) => {
+            return Err(HashUtilityError::HashComputationFailed {
+                path: output.to_owned(),
+                algorithm: algorithm.to_owned(),
+                reason: format!("database writer thread panicked: {panic:?}"),
+            });
+        }
+    }
+
     let duration = start_time.elapsed();
 
     // Clear progress bar
     pb.finish_and_clear();
 
-    // Write all results to output file
-    let output_file = File::create(output).map_err(|e| {
-        HashUtilityError::from_io_error(e, "creating output file", Some(output.to_path_buf()))
-    })?;
-    let mut writer = BufWriter::new(output_file);
-
-    // Write hashdeep header if using hashdeep format
-    if format == DatabaseFormat::Hashdeep
-        && let Err(e) =
-            DatabaseHandler::write_hashdeep_header(&mut writer, &[algorithm.to_string()])
-    {
-        eprintln!("Warning: Failed to write hashdeep header: {}", e);
-    }
-
-    for result in results.iter() {
-        let write_result = match format {
-            DatabaseFormat::Quichash => DatabaseHandler::write_entry(
-                &mut writer,
-                &result.0,
-                algorithm,
-                fast_mode,
-                &result.1,
-            ),
-            DatabaseFormat::Hashdeep => DatabaseHandler::write_hashdeep_entry(
-                &mut writer,
-                result.2,
-                std::slice::from_ref(&result.0),
-                &result.1,
-            ),
-        };
-
-        if let Err(e) = write_result {
-            eprintln!("Warning: Failed to write entry: {}", e);
-        }
-    }
-
-    // Flush the writer to ensure all data is written
-    writer.flush().map_err(|e| {
-        HashUtilityError::from_io_error(e, "flushing output file", Some(output.to_path_buf()))
-    })?;
-
     // Extract final statistics
-    let final_processed = *files_processed.lock().unwrap();
-    let final_failed = *files_failed.lock().unwrap();
-    let final_skipped = *files_skipped.lock().unwrap();
-    let final_bytes = *total_bytes.lock().unwrap();
+    let final_processed = files_processed.load(Ordering::Relaxed);
+    let final_failed = files_failed.load(Ordering::Relaxed);
+    let final_skipped = files_skipped.load(Ordering::Relaxed);
+    let final_bytes = total_bytes.load(Ordering::Relaxed);
 
     // Display summary
     println!("\nScan complete!");
@@ -296,7 +286,9 @@ pub(crate) fn walk_directory_streaming(
     // Prune ignored directories before traversal so directory-only patterns
     // also exclude every descendant in the parallel walker.
     let mut walker = WalkDir::new(root)
-        .parallelism(jwalk::Parallelism::RayonNewPool(0)) // 0 = use default thread count
+        // Discovery overlaps the global Rayon hashing pool. A small dedicated
+        // walker pool avoids doubling the runnable thread count.
+        .parallelism(jwalk::Parallelism::RayonNewPool(2))
         .skip_hidden(false) // Don't skip hidden files
         .follow_links(false);
     if let Some(handler) = ignore_handler.clone() {
@@ -320,6 +312,7 @@ pub(crate) fn walk_directory_streaming(
         });
     }
 
+    let mut discovered = 0_usize;
     for entry_result in walker {
         match entry_result {
             Ok(entry) => {
@@ -331,17 +324,17 @@ pub(crate) fn walk_directory_streaming(
                 }
 
                 // Check if this is the excluded file
-                if let Some(ref exclude_canonical) = canonical_exclude {
-                    // Compare canonical paths (only canonicalize current path once)
-                    if let Ok(canonical_path) = path.canonicalize()
-                        && &canonical_path == exclude_canonical
-                    {
-                        continue;
-                    }
+                if exclude_file.is_some_and(|excluded| path == excluded)
+                    || canonical_exclude
+                        .as_ref()
+                        .is_some_and(|excluded| path == *excluded)
+                {
+                    continue;
                 }
-                if let Some(ref exclude_canonical) = canonical_additional_exclude
-                    && let Ok(canonical_path) = path.canonicalize()
-                    && &canonical_path == exclude_canonical
+                if additional_exclude_file.is_some_and(|excluded| path == excluded)
+                    || canonical_additional_exclude
+                        .as_ref()
+                        .is_some_and(|excluded| path == *excluded)
                 {
                     continue;
                 }
@@ -362,8 +355,7 @@ pub(crate) fn walk_directory_streaming(
                 }
 
                 // Track total files discovered
-                let mut total = total_files_discovered.lock().unwrap();
-                *total += 1;
+                discovered += 1;
             }
             Err(e) => {
                 // Log errors during directory scans without stopping
@@ -371,6 +363,8 @@ pub(crate) fn walk_directory_streaming(
             }
         }
     }
+
+    *total_files_discovered.lock().unwrap() += discovered;
 
     Ok(())
 }

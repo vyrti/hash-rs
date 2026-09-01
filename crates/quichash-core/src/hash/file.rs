@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -12,7 +11,16 @@ pub(crate) const FAST_MODE_THRESHOLD: u64 = 3 * FAST_MODE_SAMPLE_SIZE; // 300MB
 
 // Constants for memory mapping
 #[cfg(feature = "mmap")]
-pub(crate) const MMAP_THRESHOLD: u64 = 2 * 1024 * 1024 * 1024; // 2GB
+#[cfg(target_pointer_width = "32")]
+pub(crate) const MMAP_THRESHOLD: u64 = 2 * 1024 * 1024 * 1024;
+#[cfg(feature = "mmap")]
+#[cfg(target_pointer_width = "64")]
+pub(crate) const MMAP_THRESHOLD: u64 = u64::MAX;
+
+/// Mapping tiny files costs more than buffered I/O, particularly in trees
+/// containing hundreds of thousands of files.
+#[cfg(feature = "mmap")]
+pub(crate) const MMAP_MIN_SIZE: u64 = 16 * 1024 * 1024;
 
 // Constants for progress bar
 pub(crate) const PROGRESS_BAR_THRESHOLD: u64 = 1024 * 1024 * 1024; // 1GB
@@ -83,7 +91,11 @@ pub fn hash_file(
     algorithms: &[Algorithm],
 ) -> Result<Vec<DigestValue>, HashUtilityError> {
     #[cfg(all(feature = "blake3", feature = "parallel", feature = "mmap"))]
-    if algorithms == [Algorithm::Blake3] {
+    if algorithms == [Algorithm::Blake3]
+        && path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() >= MMAP_MIN_SIZE)
+    {
         let mut hasher = super::hasher::Blake3Hasher::new();
         hasher.update_mmap_rayon(path).map_err(|error| {
             HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
@@ -93,7 +105,7 @@ pub fn hash_file(
             bytes: hasher.finalize().as_bytes().to_vec(),
         }]);
     }
-    let file = File::open(path).map_err(|error| {
+    let file = super::io_strategy::open(path, HashMode::Full).map_err(|error| {
         HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
     })?;
     hash_reader(file, algorithms)
@@ -113,7 +125,7 @@ pub fn hash_file_mode(
     if mode == HashMode::Full {
         return hash_file(path, algorithms);
     }
-    let mut file = File::open(path).map_err(|error| {
+    let mut file = super::io_strategy::open(path, mode).map_err(|error| {
         HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
     })?;
     let size = file
@@ -126,6 +138,7 @@ pub fn hash_file_mode(
         return hash_reader(file, algorithms);
     }
     let mut hashers = HasherSet::new(algorithms)?;
+    let mut buffer = vec![0_u8; 1024 * 1024];
     for start in [
         0,
         (size / 2).saturating_sub(FAST_MODE_SAMPLE_SIZE / 2),
@@ -136,7 +149,6 @@ pub fn hash_file_mode(
                 HashUtilityError::from_io_error(error, "seeking", Some(path.to_owned()))
             })?;
         let mut remaining = FAST_MODE_SAMPLE_SIZE;
-        let mut buffer = vec![0_u8; 1024 * 1024];
         while remaining > 0 {
             let wanted = remaining.min(buffer.len() as u64) as usize;
             let amount = file.read(&mut buffer[..wanted]).map_err(|error| {
@@ -150,4 +162,79 @@ pub fn hash_file_mode(
         }
     }
     Ok(hashers.finalize())
+}
+
+/// Hash a file from an outer parallel file pipeline. Unlike `hash_file`, this
+/// never starts a nested Rayon job and it reuses the caller's read buffer.
+#[cfg(feature = "filesystem")]
+#[allow(unsafe_code)]
+pub(crate) fn hash_file_mode_worker(
+    path: &Path,
+    algorithms: &[Algorithm],
+    mode: HashMode,
+    size: u64,
+    buffer: &mut [u8],
+) -> Result<Vec<DigestValue>, HashUtilityError> {
+    let mut file = super::io_strategy::open(path, mode).map_err(|error| {
+        HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+    })?;
+    let mut hashers = HasherSet::new(algorithms)?;
+
+    if mode == HashMode::Sampled && size >= FAST_MODE_THRESHOLD {
+        for start in [
+            0,
+            (size / 2).saturating_sub(FAST_MODE_SAMPLE_SIZE / 2),
+            size.saturating_sub(FAST_MODE_SAMPLE_SIZE),
+        ] {
+            file.seek(std::io::SeekFrom::Start(start))
+                .map_err(|error| {
+                    HashUtilityError::from_io_error(error, "seeking", Some(path.to_owned()))
+                })?;
+            hash_region(&mut file, &mut hashers, buffer, FAST_MODE_SAMPLE_SIZE, path)?;
+        }
+        return Ok(hashers.finalize());
+    }
+
+    #[cfg(feature = "mmap")]
+    if (MMAP_MIN_SIZE..MMAP_THRESHOLD).contains(&size) {
+        // SAFETY: the mapping is read-only and cannot outlive `file`. As with
+        // all file hashing APIs, callers must not concurrently truncate input.
+        if let Ok(mapping) = unsafe { memmap2::Mmap::map(&file) } {
+            hashers.update(&mapping);
+            return Ok(hashers.finalize());
+        }
+    }
+
+    loop {
+        let amount = file.read(buffer).map_err(|error| {
+            HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+        })?;
+        if amount == 0 {
+            break;
+        }
+        hashers.update(&buffer[..amount]);
+    }
+    Ok(hashers.finalize())
+}
+
+#[cfg(feature = "filesystem")]
+fn hash_region(
+    file: &mut impl Read,
+    hashers: &mut HasherSet,
+    buffer: &mut [u8],
+    mut remaining: u64,
+    path: &Path,
+) -> Result<(), HashUtilityError> {
+    while remaining > 0 {
+        let wanted = remaining.min(buffer.len() as u64) as usize;
+        let amount = file.read(&mut buffer[..wanted]).map_err(|error| {
+            HashUtilityError::from_io_error(error, "reading", Some(path.to_owned()))
+        })?;
+        if amount == 0 {
+            break;
+        }
+        hashers.update(&buffer[..amount]);
+        remaining -= amount as u64;
+    }
+    Ok(())
 }

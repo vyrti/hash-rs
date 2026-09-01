@@ -56,28 +56,28 @@ pub fn handle_verify_command(
             new_files: Vec::new(),
         };
 
-        for (db, dir, report) in &all_reports {
+        let mut first_pair = None;
+        for (db, dir, report) in all_reports {
             if !json {
                 println!(
                     "\n=== Verification: {} against {} ===",
                     db.display(),
                     dir.display()
                 );
-                display_verify_report(report);
+                display_verify_report(&report);
             }
 
             aggregated_report.matches += report.matches;
-            aggregated_report
-                .mismatches
-                .extend(report.mismatches.clone());
-            aggregated_report
-                .missing_files
-                .extend(report.missing_files.clone());
-            aggregated_report.new_files.extend(report.new_files.clone());
+            aggregated_report.mismatches.extend(report.mismatches);
+            aggregated_report.missing_files.extend(report.missing_files);
+            aggregated_report.new_files.extend(report.new_files);
+            if first_pair.is_none() {
+                first_pair = Some((db, dir));
+            }
         }
 
         // Use the first database and directory for metadata
-        let (first_db, first_dir, _) = all_reports.into_iter().next().unwrap();
+        let (first_db, first_dir) = first_pair.unwrap();
         (first_db, first_dir, aggregated_report)
     };
 

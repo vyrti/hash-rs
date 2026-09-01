@@ -101,7 +101,22 @@ impl VerifyEngine {
             .iter()
             .all(|entry| entry.digests.len() == 1)
         {
-            let database = DatabaseHandler::read_database(database_path)?;
+            let database = manifest
+                .entries
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.digests.into_iter().next().map(|digest| {
+                        (
+                            entry.relative_path,
+                            DatabaseEntry {
+                                hash: digest.to_hex(),
+                                algorithm: digest.algorithm.canonical_name().to_owned(),
+                                fast_mode: entry.mode == crate::hash::HashMode::Sampled,
+                            },
+                        )
+                    })
+                })
+                .collect();
             let database_canonical_path = database_path.canonicalize().ok();
             let mut current_files = engine::collect_files_optimized(directory)?;
             if let Some(path) = &database_canonical_path {

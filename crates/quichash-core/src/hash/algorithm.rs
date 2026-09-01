@@ -166,7 +166,8 @@ impl FromStr for Algorithm {
     type Err = HashUtilityError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
+        let trimmed = value.trim();
+        match trimmed {
             "md5" => Ok(Self::Md5),
             "sha1" | "sha-1" => Ok(Self::Sha1),
             "sha224" | "sha-224" => Ok(Self::Sha224),
@@ -182,11 +183,25 @@ impl FromStr for Algorithm {
             "blake3" => Ok(Self::Blake3),
             "xxh3" => Ok(Self::Xxh3),
             "xxh128" => Ok(Self::Xxh128),
-            _ => Err(HashUtilityError::UnsupportedAlgorithm {
-                algorithm: value.to_owned(),
-            }),
+            _ => parse_algorithm_case_insensitive(trimmed, value),
         }
     }
+}
+
+fn parse_algorithm_case_insensitive(
+    trimmed: &str,
+    original: &str,
+) -> Result<Algorithm, HashUtilityError> {
+    for algorithm in Algorithm::ALL {
+        if trimmed.eq_ignore_ascii_case(algorithm.canonical_name())
+            || trimmed.eq_ignore_ascii_case(algorithm.display_name())
+        {
+            return Ok(algorithm);
+        }
+    }
+    Err(HashUtilityError::UnsupportedAlgorithm {
+        algorithm: original.to_owned(),
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize)]

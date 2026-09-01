@@ -27,12 +27,13 @@ pub fn handle_benchmark_command(size_mb: usize, json: bool) -> Result<(), HashUt
             algorithm_count: usize,
         }
 
+        let algorithm_count = results.len();
         let output = BenchmarkOutput {
-            results: results.clone(),
+            results,
             metadata: BenchmarkMetadata {
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 data_size_mb: size_mb,
-                algorithm_count: results.len(),
+                algorithm_count,
             },
         };
 

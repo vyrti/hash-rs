@@ -99,7 +99,7 @@ pub fn handle_scan_command(
 
             // If we used a temp file, append its contents to the main output
             if idx > 0 {
-                let temp_contents = std::fs::read_to_string(&temp_output).map_err(|e| {
+                let mut temp_file = std::fs::File::open(&temp_output).map_err(|e| {
                     HashUtilityError::from_io_error(
                         e,
                         "reading temp file",
@@ -107,7 +107,6 @@ pub fn handle_scan_command(
                     )
                 })?;
 
-                use std::io::Write;
                 let mut output_file = std::fs::OpenOptions::new()
                     .append(true)
                     .open(&output)
@@ -119,15 +118,13 @@ pub fn handle_scan_command(
                         )
                     })?;
 
-                output_file
-                    .write_all(temp_contents.as_bytes())
-                    .map_err(|e| {
-                        HashUtilityError::from_io_error(
-                            e,
-                            "appending to output file",
-                            Some(output.clone()),
-                        )
-                    })?;
+                std::io::copy(&mut temp_file, &mut output_file).map_err(|e| {
+                    HashUtilityError::from_io_error(
+                        e,
+                        "appending to output file",
+                        Some(output.clone()),
+                    )
+                })?;
 
                 // Remove the temp file
                 std::fs::remove_file(&temp_output).ok();

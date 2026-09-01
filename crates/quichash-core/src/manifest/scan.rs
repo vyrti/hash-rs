@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use jwalk::WalkDir;
 
 use super::{Manifest, ManifestEntry, OperationIssue, ScanOptions, ScanReport};
 use crate::error::HashUtilityError;
-use crate::hash::hash_file_mode;
+use crate::hash::file::hash_file_mode_worker;
 use crate::operation::{FailurePolicy, OperationObserver, ProgressEvent, ProgressPhase};
 
 /// Recursively hash regular files and return a typed manifest.
@@ -46,7 +47,7 @@ pub fn scan_folder(
     let mut issues = Vec::new();
     let ignore = if options.use_hashignore {
         match crate::ignore_handler::IgnoreHandler::new(&canonical_root) {
-            Ok(value) => Some(value),
+            Ok(value) => Some(Arc::new(value)),
             Err(error) if options.failure_policy == FailurePolicy::Continue => {
                 issues.push(OperationIssue {
                     path: Some(canonical_root.clone()),
@@ -65,11 +66,29 @@ pub fn scan_folder(
     } else {
         jwalk::Parallelism::Serial
     };
-    for result in WalkDir::new(&canonical_root)
+    let mut walker = WalkDir::new(&canonical_root)
         .parallelism(parallelism)
         .skip_hidden(false)
-        .follow_links(false)
-    {
+        .follow_links(false);
+    if let Some(handler) = ignore.clone() {
+        let root = canonical_root.clone();
+        walker = walker.process_read_dir(move |_depth, _dir, _state, children| {
+            for child_result in children.iter_mut() {
+                let Ok(child) = child_result else {
+                    continue;
+                };
+                if child.file_type.is_dir()
+                    && child
+                        .path()
+                        .strip_prefix(&root)
+                        .is_ok_and(|relative| handler.should_ignore(relative, true))
+                {
+                    child.read_children = None;
+                }
+            }
+        });
+    }
+    for result in walker {
         if observer.is_cancelled() {
             return Err(HashUtilityError::Cancelled);
         }
@@ -114,7 +133,9 @@ pub fn scan_folder(
 
     let completed = std::sync::atomic::AtomicU64::new(0);
     let processed_bytes = std::sync::atomic::AtomicU64::new(0);
-    let process = |path: &PathBuf| -> Result<ManifestEntry, HashUtilityError> {
+    let process = |path: &PathBuf,
+                   buffer: &mut Vec<u8>|
+     -> Result<ManifestEntry, HashUtilityError> {
         if observer.is_cancelled() {
             return Err(HashUtilityError::Cancelled);
         }
@@ -124,7 +145,7 @@ pub fn scan_folder(
                 HashUtilityError::from_io_error(error, "reading metadata", Some(path.clone()))
             })?
             .len();
-        let digests = hash_file_mode(path, &options.algorithms, options.mode)?;
+        let digests = hash_file_mode_worker(path, &options.algorithms, options.mode, size, buffer)?;
         let completed = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         let bytes_processed =
             processed_bytes.fetch_add(size, std::sync::atomic::Ordering::Relaxed) + size;
@@ -149,12 +170,27 @@ pub fn scan_folder(
     #[cfg(feature = "parallel")]
     let results: Vec<_> = if options.parallel {
         use rayon::prelude::*;
-        paths.par_iter().map(process).collect()
+        paths
+            .par_iter()
+            .map_init(
+                || vec![0_u8; 1024 * 1024],
+                |buffer, path| process(path, buffer),
+            )
+            .collect()
     } else {
-        paths.iter().map(process).collect()
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        paths
+            .iter()
+            .map(|path| process(path, &mut buffer))
+            .collect()
     };
     #[cfg(not(feature = "parallel"))]
-    let results: Vec<_> = paths.iter().map(process).collect();
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    #[cfg(not(feature = "parallel"))]
+    let results: Vec<_> = paths
+        .iter()
+        .map(|path| process(path, &mut buffer))
+        .collect();
 
     let mut entries = Vec::new();
     for (path, result) in paths.iter().zip(results) {

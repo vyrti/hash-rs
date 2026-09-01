@@ -128,43 +128,30 @@ impl CompareEngine {
         let duplicates_db1 = Self::find_duplicates(&db1);
         let duplicates_db2 = Self::find_duplicates(&db2);
 
-        // Get all unique file paths from both databases
-        let all_paths: HashSet<PathBuf> = db1.keys().chain(db2.keys()).cloned().collect();
-
         // Classify files
         let mut unchanged_count = 0;
         let mut changed_files = Vec::new();
         let mut removed_files = Vec::new();
         let mut added_files = Vec::new();
 
-        for path in all_paths {
-            match (db1.get(&path), db2.get(&path)) {
-                (Some(entry1), Some(entry2)) => {
-                    // File exists in both databases
-                    if entry1.hash == entry2.hash {
-                        // Hashes match - unchanged
-                        unchanged_count += 1;
-                    } else {
-                        // Hashes differ - changed
-                        changed_files.push(ChangedFile {
-                            path: path.clone(),
-                            hash_db1: entry1.hash.clone(),
-                            hash_db2: entry2.hash.clone(),
-                        });
-                    }
+        for (path, entry1) in &db1 {
+            if let Some(entry2) = db2.get(path) {
+                if entry1.hash == entry2.hash {
+                    unchanged_count += 1;
+                } else {
+                    changed_files.push(ChangedFile {
+                        path: path.clone(),
+                        hash_db1: entry1.hash.clone(),
+                        hash_db2: entry2.hash.clone(),
+                    });
                 }
-                (Some(_), None) => {
-                    // File exists in DB1 but not DB2 - potentially removed or moved
-                    removed_files.push(path.clone());
-                }
-                (None, Some(_)) => {
-                    // File exists in DB2 but not DB1 - potentially added or moved
-                    added_files.push(path.clone());
-                }
-                (None, None) => {
-                    // This should never happen since we got the path from one of the databases
-                    unreachable!("Path should exist in at least one database");
-                }
+            } else {
+                removed_files.push(path.clone());
+            }
+        }
+        for path in db2.keys() {
+            if !db1.contains_key(path) {
+                added_files.push(path.clone());
             }
         }
 

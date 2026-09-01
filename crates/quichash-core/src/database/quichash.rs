@@ -28,25 +28,32 @@ pub fn write_entry(
     )
 }
 
-/// Read a QuicHash-format database file.
-pub(crate) fn read_standard_database(
+pub(crate) fn read_standard_database_from(
+    mut reader: Box<dyn BufRead>,
     path: &Path,
 ) -> Result<HashMap<PathBuf, DatabaseEntry>, HashUtilityError> {
-    let reader = super::compression::open_database_reader(path)?;
     let mut database = HashMap::new();
-
-    for (line_num, line_result) in reader.lines().enumerate() {
-        let line = line_result.map_err(|e| {
-            HashUtilityError::from_io_error(e, "reading database", Some(path.to_path_buf()))
-        })?;
+    let mut line = String::new();
+    let mut line_num = 0;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(|error| {
+            HashUtilityError::from_io_error(error, "reading database", Some(path.to_owned()))
+        })? == 0
+        {
+            break;
+        }
+        line_num += 1;
+        let record = line.strip_suffix('\n').unwrap_or(&line);
+        let record = record.strip_suffix('\r').unwrap_or(record);
 
         // Skip empty lines
-        if line.trim().is_empty() {
+        if record.trim().is_empty() {
             continue;
         }
 
         // Parse line: split on two spaces
-        match parse_line(&line) {
+        match parse_line(record) {
             Some((hash, algorithm, fast_mode, file_path)) => {
                 database.insert(
                     file_path,
@@ -61,9 +68,9 @@ pub(crate) fn read_standard_database(
                 // Warn about malformed line but continue processing (Requirement 2.4)
                 eprintln!(
                     "Warning: Skipping malformed line {} in database {}: {}",
-                    line_num + 1,
+                    line_num,
                     path.display(),
-                    line
+                    record
                 );
             }
         }
@@ -80,13 +87,13 @@ pub(crate) fn read_standard_database(
 pub(crate) fn parse_line(line: &str) -> Option<(String, String, bool, PathBuf)> {
     // Split on two spaces, but only for the first 3 fields
     // The rest is the filename (which may contain two spaces)
-    let parts: Vec<&str> = line.splitn(4, "  ").collect();
-
-    if parts.len() == 4 {
-        let hash = parts[0].trim();
-        let algorithm = parts[1].trim();
-        let fast_mode_str = parts[2].trim();
-        let path_str = parts[3];
+    let mut parts = line.splitn(4, "  ");
+    if let (Some(hash), Some(algorithm), Some(fast_mode_str), Some(path_str)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    {
+        let hash = hash.trim();
+        let algorithm = algorithm.trim();
+        let fast_mode_str = fast_mode_str.trim();
 
         // Parse fast_mode
         let fast_mode = match fast_mode_str {

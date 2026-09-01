@@ -1,18 +1,17 @@
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::hash::{DefaultHasher, Hasher as _};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Instant;
 
-use crossbeam_channel::bounded;
 use jwalk::WalkDir;
 use rayon::prelude::*;
 
 use crate::error::HashUtilityError;
 use crate::hash::HashComputer;
 use crate::ignore_handler::IgnoreHandler;
-use crate::operation::{LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle};
 
 type DedupScanResult =
     Result<(HashMap<String, Vec<(PathBuf, u64)>>, usize, usize, u64), HashUtilityError>;
@@ -24,75 +23,9 @@ pub(crate) fn scan_sequential(
     canonical_root: &Path,
     _start_time: Instant,
 ) -> DedupScanResult {
-    // Collect all files
     let files = collect_files(canonical_root)?;
-
     println!("Found {} files to process", files.len());
-
-    // Track statistics
-    let mut files_scanned = 0;
-    let mut files_failed = 0;
-    let mut total_bytes = 0u64;
-
-    // Map from hash to list of (path, size) tuples
-    let mut hash_map: HashMap<String, Vec<(PathBuf, u64)>> = HashMap::new();
-
-    // Create progress bar
-    let pb = ProgressBar::new(files.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
-            .unwrap()
-            .progress_chars("=>-")
-    );
-
-    // Process each file
-    for file_path in files.iter() {
-        // Update progress bar
-        pb.set_message(format!("{} OK, {} failed", files_scanned, files_failed));
-
-        // Check if file still exists and is accessible
-        let metadata = match fs::metadata(file_path) {
-            Ok(m) => m,
-            Err(_) => {
-                files_failed += 1;
-                pb.inc(1);
-                continue;
-            }
-        };
-
-        let file_size = metadata.len();
-
-        // Compute hash for the file (always use BLAKE3)
-        let hash_result = if fast_mode {
-            computer.compute_hash_fast(file_path, "blake3")
-        } else {
-            computer.compute_hash(file_path, "blake3")
-        };
-
-        match hash_result {
-            Ok(result) => {
-                // Add to hash map
-                hash_map
-                    .entry(result.hash)
-                    .or_default()
-                    .push((file_path.clone(), file_size));
-
-                files_scanned += 1;
-                total_bytes += file_size;
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to hash {}: {}", file_path.display(), e);
-                files_failed += 1;
-            }
-        }
-
-        pb.inc(1);
-    }
-
-    pb.finish_and_clear();
-
-    Ok((hash_map, files_scanned, files_failed, total_bytes))
+    hash_duplicate_candidates(computer, fast_mode, files, false)
 }
 
 /// Parallel scan implementation using producer-consumer pattern
@@ -101,143 +34,123 @@ pub(crate) fn scan_parallel(
     canonical_root: &Path,
     _start_time: Instant,
 ) -> DedupScanResult {
-    // Thread-safe counters
-    let files_scanned = Arc::new(Mutex::new(0usize));
-    let files_failed = Arc::new(Mutex::new(0usize));
-    let total_bytes = Arc::new(Mutex::new(0u64));
+    let files = collect_files_jwalk(canonical_root)?;
+    println!("Found {} files to process", files.len());
+    hash_duplicate_candidates(&HashComputer::new(), fast_mode, files, true)
+}
 
-    // Create progress bar
-    let pb = ProgressBar::new(0);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] Counting... {pos} files found | Processing: {msg}")
-            .unwrap()
-            .progress_chars("=>-"),
-    );
+fn hash_duplicate_candidates(
+    computer: &HashComputer,
+    fast_mode: bool,
+    files: Vec<PathBuf>,
+    parallel: bool,
+) -> DedupScanResult {
+    let mut by_size: HashMap<u64, Vec<PathBuf>> = HashMap::new();
+    let mut files_failed = 0;
+    let mut files_scanned = 0;
+    let mut total_bytes = 0_u64;
+    for path in files {
+        match fs::metadata(&path) {
+            Ok(metadata) => {
+                let size = metadata.len();
+                by_size.entry(size).or_default().push(path);
+                files_scanned += 1;
+                total_bytes += size;
+            }
+            Err(_) => files_failed += 1,
+        }
+    }
 
-    // Create bounded channel
-    let (sender, receiver) = bounded::<PathBuf>(10000);
-
-    // Track total files discovered
-    let total_files_discovered = Arc::new(Mutex::new(0usize));
-    let discovery_complete = Arc::new(Mutex::new(false));
-
-    // Clone for walker thread
-    let walker_root = canonical_root.to_path_buf();
-    let total_files_discovered_walker = Arc::clone(&total_files_discovered);
-    let discovery_complete_walker = Arc::clone(&discovery_complete);
-    let pb_walker = pb.clone();
-
-    // Spawn walker thread
-    let walker_handle = thread::spawn(move || {
-        let result = walk_directory_streaming(
-            &walker_root,
-            sender,
-            Arc::clone(&total_files_discovered_walker),
-        );
-
-        // Mark discovery as complete
-        let total = *total_files_discovered_walker.lock().unwrap();
-        pb_walker.set_length(total as u64);
-        pb_walker.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) | Processed: {msg}")
-                .unwrap()
-                .progress_chars("=>-")
-        );
-        *discovery_complete_walker.lock().unwrap() = true;
-
-        result
-    });
-
-    // Clone Arc references for parallel closure
-    let files_scanned_clone = Arc::clone(&files_scanned);
-    let files_failed_clone = Arc::clone(&files_failed);
-    let total_bytes_clone = Arc::clone(&total_bytes);
-    let pb_clone = pb.clone();
-
-    // Use rayon's par_bridge to consume from channel in parallel
-    let results: Vec<_> = receiver
+    let same_size: Vec<_> = by_size
         .into_iter()
-        .par_bridge()
-        .filter_map(|file_path| {
-            // Check if file still exists and is accessible
-            let metadata = match fs::metadata(&file_path) {
-                Ok(m) => m,
-                Err(_) => {
-                    let mut failed = files_failed_clone.lock().unwrap();
-                    *failed += 1;
-                    pb_clone.inc(1);
-                    return None;
-                }
-            };
+        .filter(|(_, paths)| paths.len() > 1)
+        .flat_map(|(size, paths)| paths.into_iter().map(move |path| (path, size)))
+        .collect();
+    let signatures: Vec<_> = if parallel {
+        same_size
+            .par_iter()
+            .map_init(
+                || vec![0_u8; 64 * 1024],
+                |buffer, (path, size)| {
+                    prefix_signature(path, buffer).map(|signature| (path.clone(), *size, signature))
+                },
+            )
+            .collect()
+    } else {
+        let mut buffer = vec![0_u8; 64 * 1024];
+        same_size
+            .iter()
+            .map(|(path, size)| {
+                prefix_signature(path, &mut buffer)
+                    .map(|signature| (path.clone(), *size, signature))
+            })
+            .collect()
+    };
 
-            let file_size = metadata.len();
-
-            // Update progress bar
-            let scanned = files_scanned_clone.lock().unwrap();
-            let failed = files_failed_clone.lock().unwrap();
-            pb_clone.set_message(format!("{} OK, {} failed", *scanned, *failed));
-            drop(scanned);
-            drop(failed);
-
-            // Compute hash (always use BLAKE3)
-            let computer = HashComputer::new();
-            let hash_result = if fast_mode {
-                computer.compute_hash_fast(&file_path, "blake3")
-            } else {
-                computer.compute_hash(&file_path, "blake3")
-            };
-
-            let result = match hash_result {
-                Ok(result) => {
-                    // Update counters
-                    let mut scanned = files_scanned_clone.lock().unwrap();
-                    *scanned += 1;
-                    let mut bytes = total_bytes_clone.lock().unwrap();
-                    *bytes += file_size;
-
-                    Some((result.hash, file_path.clone(), file_size))
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to hash {}: {}", file_path.display(), e);
-                    let mut failed = files_failed_clone.lock().unwrap();
-                    *failed += 1;
-                    None
-                }
-            };
-
-            pb_clone.inc(1);
-            result
-        })
+    let mut by_prefix: HashMap<(u64, u64), Vec<PathBuf>> = HashMap::new();
+    for result in signatures {
+        match result {
+            Ok((path, size, signature)) => {
+                by_prefix.entry((size, signature)).or_default().push(path);
+            }
+            Err(_) => files_failed += 1,
+        }
+    }
+    let candidates: Vec<_> = by_prefix
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .flat_map(|((size, _), paths)| paths.into_iter().map(move |path| (path, size)))
         .collect();
 
-    // Wait for walker thread
-    match walker_handle.join() {
-        Ok(walk_result) => {
-            if let Err(e) = walk_result {
-                eprintln!("Warning: Walker thread encountered error: {}", e);
+    let hashes: Vec<_> = if parallel {
+        candidates
+            .par_iter()
+            .map_init(
+                || (HashComputer::new(), vec![0_u8; 1024 * 1024]),
+                |(computer, buffer), (path, size)| {
+                    computer
+                        .compute_hash_for_worker(path, "blake3", fast_mode, *size, buffer)
+                        .map(|result| (result.hash, path.clone(), *size))
+                },
+            )
+            .collect()
+    } else {
+        let mut buffer = vec![0_u8; computer.buffer_size()];
+        candidates
+            .iter()
+            .map(|(path, size)| {
+                computer
+                    .compute_hash_for_worker(path, "blake3", fast_mode, *size, &mut buffer)
+                    .map(|result| (result.hash, path.clone(), *size))
+            })
+            .collect()
+    };
+
+    let mut hash_map: HashMap<String, Vec<(PathBuf, u64)>> = HashMap::new();
+    for result in hashes {
+        match result {
+            Ok((hash, path, size)) => hash_map.entry(hash).or_default().push((path, size)),
+            Err(error) => {
+                eprintln!("Warning: Failed to hash duplicate candidate: {error}");
+                files_failed += 1;
             }
         }
-        Err(e) => {
-            eprintln!("Warning: Walker thread panicked: {:?}", e);
-        }
     }
+    Ok((hash_map, files_scanned, files_failed, total_bytes))
+}
 
-    pb.finish_and_clear();
+fn prefix_signature(path: &Path, buffer: &mut [u8]) -> std::io::Result<u64> {
+    let mut file = File::open(path)?;
+    let amount = file.read(buffer)?;
+    let mut hasher = DefaultHasher::new();
+    hasher.write(&buffer[..amount]);
+    Ok(hasher.finish())
+}
 
-    // Build hash map from results
-    let mut hash_map: HashMap<String, Vec<(PathBuf, u64)>> = HashMap::new();
-    for (hash, path, size) in results {
-        hash_map.entry(hash).or_default().push((path, size));
-    }
-
-    // Extract final statistics
-    let final_scanned = *files_scanned.lock().unwrap();
-    let final_failed = *files_failed.lock().unwrap();
-    let final_bytes = *total_bytes.lock().unwrap();
-
-    Ok((hash_map, final_scanned, final_failed, final_bytes))
+fn collect_files_jwalk(root: &Path) -> Result<Vec<PathBuf>, HashUtilityError> {
+    let (sender, receiver) = crossbeam_channel::unbounded();
+    walk_directory_streaming(root, sender, Arc::new(Mutex::new(0)))?;
+    Ok(receiver.into_iter().collect())
 }
 
 /// Walk directory and send file paths to channel
@@ -280,6 +193,7 @@ pub fn walk_directory_streaming(
         });
     }
 
+    let mut discovered = 0_usize;
     for entry_result in walker {
         match entry_result {
             Ok(entry) => {
@@ -304,14 +218,15 @@ pub fn walk_directory_streaming(
                 }
 
                 // Track total files discovered
-                let mut total = total_files_discovered.lock().unwrap();
-                *total += 1;
+                discovered += 1;
             }
             Err(e) => {
                 eprintln!("Warning: Error walking directory: {}", e);
             }
         }
     }
+
+    *total_files_discovered.lock().unwrap() += discovered;
 
     Ok(())
 }

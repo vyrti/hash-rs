@@ -12,13 +12,19 @@ use super::{DatabaseEntry, DatabaseFormat, DatabaseIssue, ManifestRead};
 
 /// Detect the format of a database file by reading its first few lines
 pub fn detect_format(path: &Path) -> Result<DatabaseFormat, HashUtilityError> {
-    let reader = super::compression::open_database_reader(path)?;
+    let (format, _) = open_database_detected(path)?;
+    Ok(format)
+}
 
-    for line_result in reader.lines().take(10) {
-        let line = line_result.map_err(|e| {
-            HashUtilityError::from_io_error(e, "reading database", Some(path.to_path_buf()))
-        })?;
-
+pub(crate) fn open_database_detected(
+    path: &Path,
+) -> Result<(DatabaseFormat, Box<dyn BufRead>), HashUtilityError> {
+    let mut reader = super::compression::open_database_reader(path)?;
+    let prefix = reader.fill_buf().map_err(|error| {
+        HashUtilityError::from_io_error(error, "reading database", Some(path.to_owned()))
+    })?;
+    let text = String::from_utf8_lossy(prefix);
+    for line in text.lines().take(10) {
         let trimmed = line.trim();
 
         // Skip empty lines
@@ -28,26 +34,26 @@ pub fn detect_format(path: &Path) -> Result<DatabaseFormat, HashUtilityError> {
 
         // Check for hashdeep header (starts with %)
         if trimmed.starts_with('%') {
-            return Ok(DatabaseFormat::Hashdeep);
+            return Ok((DatabaseFormat::Hashdeep, reader));
         }
 
         // Prefer a valid QuicHash row so a comma in its filename does not
         // incorrectly select the hashdeep parser.
         if super::quichash::parse_line(trimmed).is_some() {
-            return Ok(DatabaseFormat::Quichash);
+            return Ok((DatabaseFormat::Quichash, reader));
         }
 
         if super::hashdeep::parse_hashdeep_record(trimmed, None).is_some() {
-            return Ok(DatabaseFormat::Hashdeep);
+            return Ok((DatabaseFormat::Hashdeep, reader));
         }
 
         if trimmed.contains("  ") {
-            return Ok(DatabaseFormat::Quichash);
+            return Ok((DatabaseFormat::Quichash, reader));
         }
     }
 
     // Default to QuicHash format if we can't determine
-    Ok(DatabaseFormat::Quichash)
+    Ok((DatabaseFormat::Quichash, reader))
 }
 
 /// Read a hash database file and parse it into a HashMap
@@ -55,11 +61,11 @@ pub fn detect_format(path: &Path) -> Result<DatabaseFormat, HashUtilityError> {
 /// Malformed lines are skipped with a warning to stderr
 /// Auto-detects format (QuicHash or hashdeep)
 pub fn read_database(path: &Path) -> Result<HashMap<PathBuf, DatabaseEntry>, HashUtilityError> {
-    let format = detect_format(path)?;
+    let (format, reader) = open_database_detected(path)?;
 
     match format {
-        DatabaseFormat::Quichash => super::quichash::read_standard_database(path),
-        DatabaseFormat::Hashdeep => super::hashdeep::read_hashdeep_database(path),
+        DatabaseFormat::Quichash => super::quichash::read_standard_database_from(reader, path),
+        DatabaseFormat::Hashdeep => super::hashdeep::read_hashdeep_database_from(reader, path),
     }
 }
 
@@ -81,17 +87,24 @@ pub fn read_manifest_with_policy(
 ) -> Result<ManifestRead, HashUtilityError> {
     use std::collections::BTreeMap;
 
-    let format = detect_format(path)?;
-    let reader = super::compression::open_database_reader(path)?;
+    let (format, mut reader) = open_database_detected(path)?;
     let mut entries: BTreeMap<PathBuf, ManifestEntry> = BTreeMap::new();
     let mut issues = Vec::new();
     let mut hashdeep_algorithms = Vec::new();
-    for (index, line_result) in reader.lines().enumerate() {
-        let line_number = index + 1;
-        let line = line_result.map_err(|error| {
+    let mut line = String::new();
+    let mut line_number = 0;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(|error| {
             HashUtilityError::from_io_error(error, "reading database", Some(path.to_owned()))
-        })?;
-        let trimmed = line.trim();
+        })? == 0
+        {
+            break;
+        }
+        line_number += 1;
+        let record = line.strip_suffix('\n').unwrap_or(&line);
+        let record = record.strip_suffix('\r').unwrap_or(record);
+        let trimmed = record.trim();
         if trimmed.is_empty() || trimmed.starts_with("##") {
             continue;
         }
@@ -112,9 +125,9 @@ pub fn read_manifest_with_policy(
             continue;
         }
         let parsed = match format {
-            DatabaseFormat::Quichash => super::quichash::parse_manifest_standard(&line),
+            DatabaseFormat::Quichash => super::quichash::parse_manifest_standard(record),
             DatabaseFormat::Hashdeep => {
-                super::hashdeep::parse_manifest_hashdeep(&line, &hashdeep_algorithms)
+                super::hashdeep::parse_manifest_hashdeep(record, &hashdeep_algorithms)
             }
         };
         match parsed {
@@ -174,12 +187,16 @@ pub fn write_manifest(
     manifest: &Manifest,
     format: DatabaseFormat,
 ) -> std::io::Result<()> {
-    let mut manifest = manifest.clone();
-    manifest.canonicalize();
+    let mut entries: Vec<_> = manifest.entries.iter().collect();
+    entries.sort_by_cached_key(|entry| {
+        super::super::manifest::canonical_path_bytes(&entry.relative_path)
+    });
     match format {
         DatabaseFormat::Quichash => {
-            for entry in &manifest.entries {
-                for digest in &entry.digests {
+            for entry in &entries {
+                let mut digests: Vec<_> = entry.digests.iter().collect();
+                digests.sort_by_key(|digest| digest.algorithm);
+                for digest in digests {
                     super::quichash::write_entry(
                         writer,
                         &digest.to_hex(),
@@ -203,7 +220,7 @@ pub fn write_manifest(
                 .map(|algorithm| algorithm.canonical_name().to_owned())
                 .collect();
             super::hashdeep::write_hashdeep_header(writer, &names)?;
-            for entry in &manifest.entries {
+            for entry in entries {
                 let hashes: Vec<_> = algorithms
                     .iter()
                     .map(|algorithm| {
@@ -241,6 +258,10 @@ pub fn write_manifest_file(
 ) -> Result<PathBuf, HashUtilityError> {
     // Validate the combination before creating a file.
     let final_path = super::compression::canonical_output_path(requested_path, format, compressed)?;
+    if compressed {
+        super::compression::write_compressed_manifest(&final_path, manifest)?;
+        return Ok(final_path);
+    }
     let plain_path = super::compression::canonical_output_path(requested_path, format, false)?;
     let mut file = File::create(&plain_path).map_err(|error| {
         HashUtilityError::from_io_error(error, "creating database", Some(plain_path.clone()))
@@ -253,14 +274,5 @@ pub fn write_manifest_file(
     })?;
     drop(file);
 
-    if !compressed {
-        return Ok(plain_path);
-    }
-
-    let compressed_path = super::compression::compress_database(&plain_path)?;
-    debug_assert_eq!(compressed_path, final_path);
-    std::fs::remove_file(&plain_path).map_err(|error| {
-        HashUtilityError::from_io_error(error, "removing uncompressed database", Some(plain_path))
-    })?;
-    Ok(compressed_path)
+    Ok(plain_path)
 }

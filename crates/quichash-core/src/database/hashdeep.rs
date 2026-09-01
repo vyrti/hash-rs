@@ -41,23 +41,27 @@ pub fn write_hashdeep_entry(
     writeln!(writer, ",{}", path.display())
 }
 
-/// Read a hashdeep format database file
-/// Format: size,hash1,hash2,...,filename
-/// Header lines start with %
-/// Note: For files with multiple hashes, only the first hash is stored
-pub(crate) fn read_hashdeep_database(
+pub(crate) fn read_hashdeep_database_from(
+    mut reader: Box<dyn BufRead>,
     path: &Path,
 ) -> Result<HashMap<PathBuf, DatabaseEntry>, HashUtilityError> {
-    let reader = super::compression::open_database_reader(path)?;
     let mut database = HashMap::new();
     let mut hash_algorithms = Vec::new();
+    let mut line = String::new();
+    let mut line_num = 0;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(|error| {
+            HashUtilityError::from_io_error(error, "reading database", Some(path.to_owned()))
+        })? == 0
+        {
+            break;
+        }
+        line_num += 1;
+        let record = line.strip_suffix('\n').unwrap_or(&line);
+        let record = record.strip_suffix('\r').unwrap_or(record);
 
-    for (line_num, line_result) in reader.lines().enumerate() {
-        let line = line_result.map_err(|e| {
-            HashUtilityError::from_io_error(e, "reading database", Some(path.to_path_buf()))
-        })?;
-
-        let trimmed = line.trim();
+        let trimmed = record.trim();
 
         // Skip empty lines
         if trimmed.is_empty() {
@@ -93,7 +97,7 @@ pub(crate) fn read_hashdeep_database(
         }
 
         // Parse data lines
-        match parse_hashdeep_line(&line, &hash_algorithms) {
+        match parse_hashdeep_line(record, &hash_algorithms) {
             Some(entries) => {
                 // Only use the first hash entry for each file
                 // (hashdeep can have multiple hashes per file, but our verify engine expects one)
@@ -104,7 +108,7 @@ pub(crate) fn read_hashdeep_database(
             None => {
                 eprintln!(
                     "Warning: Skipping malformed line {} in hashdeep database {}: {}",
-                    line_num + 1,
+                    line_num,
                     path.display(),
                     trimmed
                 );
@@ -171,31 +175,47 @@ pub(crate) fn parse_hashdeep_record(
     line: &str,
     expected_hash_count: Option<usize>,
 ) -> Option<HashdeepRecord> {
+    if let Some(hash_count) = expected_hash_count {
+        let mut fields = line.splitn(hash_count + 2, ',');
+        let size = fields.next()?.trim().parse().ok()?;
+        let mut hashes = Vec::with_capacity(hash_count);
+        for _ in 0..hash_count {
+            let hash = fields.next()?.trim();
+            if hash.is_empty() {
+                return None;
+            }
+            hashes.push(hash.to_owned());
+        }
+        let filename = fields.next()?.to_owned();
+        if filename.is_empty() {
+            return None;
+        }
+        return Some(HashdeepRecord {
+            size,
+            hashes,
+            filename,
+        });
+    }
+
     let parts: Vec<&str> = line.split(',').collect();
     if parts.len() < 3 {
         return None;
     }
 
     let size = parts[0].trim().parse().ok()?;
-    let filename_index = match expected_hash_count {
-        Some(hash_count) => {
-            let index = 1 + hash_count;
-            (parts.len() > index).then_some(index)?
+    let filename_index = {
+        let remainder = &parts[1..];
+        let hash_count = remainder
+            .iter()
+            .take_while(|field| is_hashdeep_hash_field(field))
+            .count();
+        if hash_count == 0 {
+            return None;
         }
-        None => {
-            let remainder = &parts[1..];
-            let hash_count = remainder
-                .iter()
-                .take_while(|field| is_hashdeep_hash_field(field))
-                .count();
-            if hash_count == 0 {
-                return None;
-            }
-            if hash_count == remainder.len() {
-                parts.len() - 1
-            } else {
-                1 + hash_count
-            }
+        if hash_count == remainder.len() {
+            parts.len() - 1
+        } else {
+            1 + hash_count
         }
     };
 

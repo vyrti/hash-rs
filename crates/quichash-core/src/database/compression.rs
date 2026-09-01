@@ -10,6 +10,7 @@ use structured_zstd::encoding::{CompressionLevel, StreamingEncoder};
 use crate::error::HashUtilityError;
 
 use super::DatabaseFormat;
+use crate::manifest::Manifest;
 
 /// Return the canonical output path for a database.
 ///
@@ -121,6 +122,58 @@ pub fn compress_database(input_path: &Path) -> Result<PathBuf, HashUtilityError>
     }
 
     Ok(output_path)
+}
+
+/// Write a manifest directly through Zstandard, avoiding a complete temporary
+/// plain-text database and a second pass over that data.
+#[cfg(feature = "zstd")]
+pub(crate) fn write_compressed_manifest(
+    output_path: &Path,
+    manifest: &Manifest,
+) -> Result<(), HashUtilityError> {
+    let output_file = File::create(output_path).map_err(|error| {
+        HashUtilityError::from_io_error(
+            error,
+            "creating compressed database",
+            Some(output_path.to_owned()),
+        )
+    })?;
+    let mut encoder = StreamingEncoder::new(output_file, CompressionLevel::from_level(3));
+    let result = (|| {
+        super::manifest_io::write_manifest(&mut encoder, manifest, DatabaseFormat::Quichash)
+            .map_err(|error| {
+                HashUtilityError::from_io_error(
+                    error,
+                    "writing compressed database",
+                    Some(output_path.to_owned()),
+                )
+            })?;
+        encoder.finish().map_err(|error| {
+            HashUtilityError::from_io_error(
+                std::io::Error::other(error.to_string()),
+                "finalizing compressed database",
+                Some(output_path.to_owned()),
+            )
+        })?;
+        Ok::<(), HashUtilityError>(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(output_path);
+    }
+    result
+}
+
+#[cfg(not(feature = "zstd"))]
+pub(crate) fn write_compressed_manifest(
+    output_path: &Path,
+    _manifest: &Manifest,
+) -> Result<(), HashUtilityError> {
+    Err(HashUtilityError::InvalidArguments {
+        message: format!(
+            "writing '{}' requires the 'zstd' Cargo feature",
+            output_path.display()
+        ),
+    })
 }
 
 #[cfg(not(feature = "zstd"))]

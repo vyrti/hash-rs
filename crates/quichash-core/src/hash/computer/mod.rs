@@ -183,8 +183,8 @@ impl HashComputer {
 
     /// Compute multiple hashes for a single file in a single pass
     ///
-    /// For files smaller than 2GB, uses memory mapping to avoid kernel-to-userspace copy overhead.
-    /// For files larger than 2GB, falls back to buffered reading with 1MB buffer.
+    /// Uses buffered I/O for small files and memory mapping for larger files on
+    /// 64-bit targets. 32-bit targets cap mappings at 2 GiB.
     ///
     /// # Safety
     ///
@@ -217,7 +217,7 @@ impl HashComputer {
         }
 
         // Open file for reading with better error context
-        let file = File::open(path)
+        let file = super::io_strategy::open(path, super::HashMode::Full)
             .map_err(|e| HashUtilityError::from_io_error(e, "reading", Some(path.to_path_buf())))?;
 
         // Get file size to determine whether to use memory mapping
@@ -232,10 +232,10 @@ impl HashComputer {
         let should_show_progress =
             show_progress && file_size > PROGRESS_BAR_THRESHOLD && std::io::stdout().is_terminal();
 
-        // Use memory mapping for files smaller than 2GB when requested.
+        // Use memory mapping only when it amortizes mapping/page-fault overhead.
         #[cfg(feature = "mmap")]
         {
-            if file_size > 0 && file_size < MMAP_THRESHOLD {
+            if (MMAP_MIN_SIZE..MMAP_THRESHOLD).contains(&file_size) {
                 // Try to memory map the file
                 match unsafe { Mmap::map(&file) } {
                     Ok(mmap) => {
@@ -260,7 +260,7 @@ impl HashComputer {
                     }
                 }
             } else {
-                // Use buffered reading for large files (>2GB) or empty files
+                // Use buffered reading outside the platform's mapping range.
                 if should_show_progress {
                     self.hash_multiple_with_buffered_io_progress(
                         &mut hashers,

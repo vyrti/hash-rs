@@ -188,10 +188,8 @@ pub struct ManifestVerifyReport {
 impl Manifest {
     /// Sort entries and their digests into the canonical manifest order.
     pub fn canonicalize(&mut self) {
-        self.entries.sort_by(|left, right| {
-            canonical_path_bytes(&left.relative_path)
-                .cmp(&canonical_path_bytes(&right.relative_path))
-        });
+        self.entries
+            .sort_by_cached_key(|entry| canonical_path_bytes(&entry.relative_path));
         for entry in &mut self.entries {
             entry.digests.sort_by_key(|digest| digest.algorithm);
         }
@@ -206,11 +204,11 @@ impl Manifest {
         &self,
         algorithms: &[Algorithm],
     ) -> Result<Vec<FolderDigest>, HashUtilityError> {
-        let mut canonical = self.clone();
-        canonical.canonicalize();
+        let mut entries: Vec<_> = self.entries.iter().collect();
+        entries.sort_by_cached_key(|entry| canonical_path_bytes(&entry.relative_path));
         let mut hashers = HasherSet::new(algorithms)?;
         hashers.update(b"quichash-folder-v1\0");
-        for entry in &canonical.entries {
+        for entry in entries {
             let path = canonical_path_bytes(&entry.relative_path);
             hashers.update(&(path.len() as u64).to_le_bytes());
             hashers.update(&path);
@@ -219,7 +217,9 @@ impl Manifest {
                 HashMode::Full => 0,
                 HashMode::Sampled => 1,
             }]);
-            for digest in &entry.digests {
+            let mut digests: Vec<_> = entry.digests.iter().collect();
+            digests.sort_by_key(|digest| digest.algorithm);
+            for digest in digests {
                 let name = digest.algorithm.canonical_name().as_bytes();
                 hashers.update(&(name.len() as u16).to_le_bytes());
                 hashers.update(name);
@@ -249,11 +249,10 @@ pub(crate) fn canonical_path_bytes(path: &std::path::Path) -> Vec<u8> {
             output.extend_from_slice(text.as_bytes());
         } else {
             output.extend_from_slice(b"%native:");
+            const HEX: &[u8; 16] = b"0123456789abcdef";
             for byte in value.as_encoded_bytes() {
-                use std::fmt::Write as _;
-                let mut encoded = String::new();
-                let _ = write!(encoded, "{byte:02x}");
-                output.extend_from_slice(encoded.as_bytes());
+                output.push(HEX[(byte >> 4) as usize]);
+                output.push(HEX[(byte & 0x0f) as usize]);
             }
         }
     }

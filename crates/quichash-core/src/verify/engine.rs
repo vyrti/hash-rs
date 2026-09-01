@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
 
@@ -103,11 +102,6 @@ pub(crate) fn verify_parallel(
     database_canonical: HashMap<PathBuf, DatabaseEntry>,
     current_files: HashSet<PathBuf>,
 ) -> Result<VerifyReport, VerifyError> {
-    // Thread-safe counters for progress tracking
-    let matches = Arc::new(Mutex::new(0usize));
-    let mismatches = Arc::new(Mutex::new(Vec::new()));
-    let missing_files = Arc::new(Mutex::new(Vec::new()));
-
     // Create progress bar
     let pb = ProgressBar::new(database_canonical.len() as u64);
     pb.set_style(
@@ -119,88 +113,84 @@ pub(crate) fn verify_parallel(
             .progress_chars("=>-"),
     );
 
-    // Clone Arc references for use in parallel closure
-    let matches_clone = Arc::clone(&matches);
-    let mismatches_clone = Arc::clone(&mismatches);
-    let missing_files_clone = Arc::clone(&missing_files);
-    let pb_clone = pb.clone();
+    enum Outcome {
+        Match,
+        Mismatch(Mismatch),
+        Missing(PathBuf),
+        Failed,
+    }
 
-    // Collect database entries into a vector for parallel iteration
-    let db_entries: Vec<_> = database_canonical.iter().collect();
-
-    // Process all database entries in parallel
-    let checked_files: Vec<PathBuf> = db_entries
+    let outcomes: Vec<_> = database_canonical
         .par_iter()
-        .map(|(db_path, entry)| {
-            // Update progress bar
-            let match_count = *matches_clone.lock().unwrap();
-            let mismatch_count = mismatches_clone.lock().unwrap().len();
-            let missing_count = missing_files_clone.lock().unwrap().len();
-            pb_clone.set_message(format!(
-                "{} OK, {} changed, {} missing",
-                match_count, mismatch_count, missing_count
-            ));
+        .map_init(
+            || (HashComputer::new(), vec![0_u8; 1024 * 1024]),
+            |(computer, buffer), (db_path, entry)| {
+                let outcome = if current_files.contains(db_path) {
+                    // File exists, compute current hash using the mode specified in the database
+                    let hash_result = std::fs::metadata(db_path)
+                        .map_err(HashUtilityError::from)
+                        .and_then(|metadata| {
+                            computer.compute_hash_for_worker(
+                                db_path,
+                                &entry.algorithm,
+                                entry.fast_mode,
+                                metadata.len(),
+                                buffer,
+                            )
+                        });
 
-            if current_files.contains(*db_path) {
-                // File exists, compute current hash using the mode specified in the database
-                let computer = HashComputer::new();
-                let hash_result = if entry.fast_mode {
-                    computer.compute_hash_fast(db_path, &entry.algorithm)
-                } else {
-                    computer.compute_hash(db_path, &entry.algorithm)
-                };
-
-                match hash_result {
-                    Ok(result) => {
-                        if result.hash == entry.hash {
-                            let mut count = matches_clone.lock().unwrap();
-                            *count += 1;
-                        } else {
-                            let mut list = mismatches_clone.lock().unwrap();
-                            list.push(Mismatch {
-                                path: (*db_path).clone(),
-                                expected: entry.hash.clone(),
-                                actual: result.hash,
-                            });
+                    match hash_result {
+                        Ok(result) => {
+                            if result.hash == entry.hash {
+                                Outcome::Match
+                            } else {
+                                Outcome::Mismatch(Mismatch {
+                                    path: db_path.clone(),
+                                    expected: entry.hash.clone(),
+                                    actual: result.hash,
+                                })
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to hash {}: {}", db_path.display(), e);
+                            Outcome::Failed
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Warning: Failed to hash {}: {}", db_path.display(), e);
-                    }
-                }
-            } else {
-                // File in database but not in filesystem
-                let mut list = missing_files_clone.lock().unwrap();
-                list.push((*db_path).clone());
-            }
-
-            pb_clone.inc(1);
-            (*db_path).clone()
-        })
+                } else {
+                    Outcome::Missing(db_path.clone())
+                };
+                pb.inc(1);
+                outcome
+            },
+        )
         .collect();
 
     // Clear progress bar
     pb.finish_and_clear();
 
-    // Convert checked_files to HashSet for efficient lookup
-    let checked_set: HashSet<PathBuf> = checked_files.into_iter().collect();
-
     // Find new files (in filesystem but not in database)
     let new_files: Vec<PathBuf> = current_files
         .iter()
-        .filter(|path| !checked_set.contains(*path))
+        .filter(|path| !database_canonical.contains_key(*path))
         .cloned()
         .collect();
 
-    // Extract final results from Arc<Mutex<>>
-    let final_matches = *matches.lock().unwrap();
-    let final_mismatches = mismatches.lock().unwrap().clone();
-    let final_missing = missing_files.lock().unwrap().clone();
+    let mut matches = 0;
+    let mut mismatches = Vec::new();
+    let mut missing_files = Vec::new();
+    for outcome in outcomes {
+        match outcome {
+            Outcome::Match => matches += 1,
+            Outcome::Mismatch(mismatch) => mismatches.push(mismatch),
+            Outcome::Missing(path) => missing_files.push(path),
+            Outcome::Failed => {}
+        }
+    }
 
     Ok(VerifyReport {
-        matches: final_matches,
-        mismatches: final_mismatches,
-        missing_files: final_missing,
+        matches,
+        mismatches,
+        missing_files,
         new_files,
     })
 }
@@ -210,9 +200,12 @@ pub(crate) fn collect_files_optimized(directory: &Path) -> Result<HashSet<PathBu
     use jwalk::WalkDir;
 
     let mut files = HashSet::new();
+    let root = directory.canonicalize().map_err(|error| {
+        HashUtilityError::from_io_error(error, "scanning directory", Some(directory.to_owned()))
+    })?;
 
     // Use jwalk for fast parallel directory traversal (same configuration as scan)
-    for entry_result in WalkDir::new(directory)
+    for entry_result in WalkDir::new(&root)
         .parallelism(jwalk::Parallelism::RayonNewPool(0))
         .skip_hidden(false) // Don't skip hidden files
         .follow_links(false)
@@ -227,10 +220,7 @@ pub(crate) fn collect_files_optimized(directory: &Path) -> Result<HashSet<PathBu
 
                 let path = entry.path();
 
-                // Canonicalize the path for consistent comparison
-                if let Ok(canonical_path) = path.canonicalize() {
-                    files.insert(canonical_path);
-                }
+                files.insert(path);
             }
             Err(e) => {
                 // Log errors but continue processing
@@ -248,25 +238,18 @@ pub(crate) fn resolve_database_paths_optimized(
     base_directory: &Path,
 ) -> Result<HashMap<PathBuf, DatabaseEntry>, VerifyError> {
     let mut resolved = HashMap::new();
-    let mut canonical_cache: HashMap<PathBuf, PathBuf> = HashMap::new();
+    let canonical_base = base_directory
+        .canonicalize()
+        .unwrap_or_else(|_| base_directory.to_owned());
 
     for (path, entry) in database {
         // Use path_utils to resolve the path properly
-        let absolute_path = path_utils::resolve_path(path, base_directory);
-
-        // Check cache first to avoid redundant canonicalization
-        let final_path = if let Some(cached) = canonical_cache.get(&absolute_path) {
-            cached.clone()
+        let absolute_path = path_utils::resolve_path(path, &canonical_base);
+        let final_path = if path.is_absolute() {
+            absolute_path.canonicalize().unwrap_or(absolute_path)
         } else {
-            // Try to canonicalize if the file exists, otherwise use as-is
-            let result = match path_utils::try_canonicalize(&absolute_path) {
-                Ok(canonical) => canonical,
-                Err(_) => absolute_path.clone(),
-            };
-            canonical_cache.insert(absolute_path, result.clone());
-            result
+            absolute_path
         };
-
         resolved.insert(final_path, entry.clone());
     }
 

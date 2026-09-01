@@ -91,18 +91,26 @@ pub fn read_checksum_manifest(path: &Path) -> Result<Manifest, HashUtilityError>
                 path.display()
             ),
         })?;
-    let reader = super::compression::open_database_reader(path)?;
+    let mut reader = super::compression::open_database_reader(path)?;
     let mut entries: BTreeMap<PathBuf, ManifestEntry> = BTreeMap::new();
     let mut usable_rows = 0usize;
-    for (index, line_result) in reader.lines().enumerate() {
-        let line_number = index + 1;
-        let line = line_result.map_err(|error| {
+    let mut line = String::new();
+    let mut line_number = 0;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(|error| {
             HashUtilityError::from_io_error(error, "reading checksum file", Some(path.to_owned()))
-        })?;
-        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+        })? == 0
+        {
+            break;
+        }
+        line_number += 1;
+        let record = line.strip_suffix('\n').unwrap_or(&line);
+        let record = record.strip_suffix('\r').unwrap_or(record);
+        if record.trim().is_empty() || record.trim_start().starts_with('#') {
             continue;
         }
-        let (relative_path, digest) = parse_checksum_line(&line, algorithm).map_err(|reason| {
+        let (relative_path, digest) = parse_checksum_line(record, algorithm).map_err(|reason| {
             HashUtilityError::DatabaseParseError {
                 path: path.to_owned(),
                 line: line_number,

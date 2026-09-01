@@ -7,7 +7,6 @@ use crate::database::{DatabaseFormat, DatabaseHandler};
 use crate::error::HashUtilityError;
 use crate::hash::HashComputer;
 use crate::operation::{LegacyProgress as ProgressBar, LegacyProgressStyle as ProgressStyle};
-use crate::path_utils;
 
 /// Sequential scan implementation
 #[allow(clippy::too_many_arguments)]
@@ -45,6 +44,7 @@ pub(crate) fn scan_sequential(
     let mut files_failed = 0;
     let mut files_skipped = 0;
     let mut total_bytes = 0u64;
+    let mut buffer = vec![0_u8; computer.buffer_size()];
 
     // Create progress bar
     let pb = ProgressBar::new(files.len() as u64);
@@ -57,40 +57,36 @@ pub(crate) fn scan_sequential(
 
     // Process each file
     for file_path in files.iter() {
-        // Update progress bar with counts instead of filename to avoid encoding issues
-        pb.set_message(format!(
-            "{} OK, {} failed, {} skipped",
-            files_processed, files_failed, files_skipped
-        ));
-
         // Check if file still exists and is accessible before processing
-        let metadata_check = fs::metadata(file_path);
-        if metadata_check.is_err() {
-            files_skipped += 1;
-            pb.inc(1);
-            continue;
-        }
+        let metadata = match fs::metadata(file_path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                files_skipped += 1;
+                pb.inc(1);
+                continue;
+            }
+        };
+        let file_size = metadata.len();
 
         // Compute hash for the file (using fast mode if enabled)
-        let hash_result = if fast_mode {
-            computer.compute_hash_fast(file_path, algorithm)
-        } else {
-            computer.compute_hash(file_path, algorithm)
-        };
+        let hash_result = computer.compute_hash_for_worker(
+            file_path,
+            algorithm,
+            fast_mode,
+            file_size,
+            &mut buffer,
+        );
 
         match hash_result {
             Ok(result) => {
                 // Try to get relative path for cleaner database entries
                 // Use cached version since canonical_root is already canonicalized
-                let path_to_write =
-                    match path_utils::get_relative_path_cached(file_path, canonical_root) {
-                        Ok(rel_path) => rel_path,
-                        Err(_) => file_path.clone(),
-                    };
+                let path_to_write = file_path
+                    .strip_prefix(canonical_root)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|_| file_path.clone());
 
                 // Get file size for hashdeep format
-                let file_size = fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
-
                 // Write hash entry to database with metadata
                 let write_result = match format {
                     DatabaseFormat::Quichash => DatabaseHandler::write_entry(
@@ -204,7 +200,7 @@ pub(crate) fn collect_files_recursive_with_cache(
     dir: &Path,
     files: &mut Vec<PathBuf>,
     ignore_handler: Option<&crate::ignore_handler::IgnoreHandler>,
-    _exclude_file: Option<&Path>,
+    exclude_file: Option<&Path>,
     canonical_exclude_cache: Option<&PathBuf>,
 ) -> Result<(), super::ScanError> {
     // Check if path exists and is accessible
@@ -251,9 +247,8 @@ pub(crate) fn collect_files_recursive_with_cache(
         let is_dir = metadata.is_dir();
 
         // Check if this is the excluded file using cached canonical path
-        if let Some(exclude_canonical) = canonical_exclude_cache
-            && let Ok(canonical_path) = path.canonicalize()
-            && &canonical_path == exclude_canonical
+        if exclude_file.is_some_and(|excluded| path == excluded)
+            || canonical_exclude_cache.is_some_and(|exclude_canonical| path == *exclude_canonical)
         {
             continue;
         }
@@ -274,7 +269,7 @@ pub(crate) fn collect_files_recursive_with_cache(
                 &path,
                 files,
                 ignore_handler,
-                _exclude_file,
+                exclude_file,
                 canonical_exclude_cache,
             )
         {
