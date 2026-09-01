@@ -4,7 +4,7 @@ mod commands;
 use std::io::IsTerminal;
 use std::process;
 
-use cli::{parse_args, Command};
+use cli::{Command, parse_args};
 use commands::*;
 
 fn main() {

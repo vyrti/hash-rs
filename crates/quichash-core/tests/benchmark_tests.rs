@@ -1,5 +1,5 @@
 use quichash_core::benchmark::{
-    calculate_throughput, generate_test_data, BenchmarkEngine, BenchmarkResult,
+    BenchmarkEngine, BenchmarkResult, calculate_throughput, generate_test_data,
 };
 use std::time::Duration;
 

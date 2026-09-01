@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{Sender, bounded};
 use jwalk::WalkDir;
 use rayon::prelude::*;
 
@@ -199,12 +199,11 @@ pub(crate) fn scan_parallel(
     let mut writer = BufWriter::new(output_file);
 
     // Write hashdeep header if using hashdeep format
-    if format == DatabaseFormat::Hashdeep {
-        if let Err(e) =
+    if format == DatabaseFormat::Hashdeep
+        && let Err(e) =
             DatabaseHandler::write_hashdeep_header(&mut writer, &[algorithm.to_string()])
-        {
-            eprintln!("Warning: Failed to write hashdeep header: {}", e);
-        }
+    {
+        eprintln!("Warning: Failed to write hashdeep header: {}", e);
     }
 
     for result in results.iter() {
@@ -334,27 +333,25 @@ pub(crate) fn walk_directory_streaming(
                 // Check if this is the excluded file
                 if let Some(ref exclude_canonical) = canonical_exclude {
                     // Compare canonical paths (only canonicalize current path once)
-                    if let Ok(canonical_path) = path.canonicalize() {
-                        if &canonical_path == exclude_canonical {
-                            continue;
-                        }
+                    if let Ok(canonical_path) = path.canonicalize()
+                        && &canonical_path == exclude_canonical
+                    {
+                        continue;
                     }
                 }
-                if let Some(ref exclude_canonical) = canonical_additional_exclude {
-                    if let Ok(canonical_path) = path.canonicalize() {
-                        if &canonical_path == exclude_canonical {
-                            continue;
-                        }
-                    }
+                if let Some(ref exclude_canonical) = canonical_additional_exclude
+                    && let Ok(canonical_path) = path.canonicalize()
+                    && &canonical_path == exclude_canonical
+                {
+                    continue;
                 }
 
                 // Check if this path should be ignored
-                if let Some(ref handler) = ignore_handler {
-                    if let Ok(rel_path) = path.strip_prefix(root) {
-                        if handler.should_ignore(rel_path, false) {
-                            continue;
-                        }
-                    }
+                if let Some(ref handler) = ignore_handler
+                    && let Ok(rel_path) = path.strip_prefix(root)
+                    && handler.should_ignore(rel_path, false)
+                {
+                    continue;
                 }
 
                 // Send file path to channel

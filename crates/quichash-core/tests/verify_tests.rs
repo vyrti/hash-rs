@@ -50,9 +50,11 @@ fn checksum_verification_rejects_unknown_extension() {
     let error = VerifyEngine::new()
         .verify(&checksum, temporary.path())
         .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("cannot infer checksum algorithm"));
+    assert!(
+        error
+            .to_string()
+            .contains("cannot infer checksum algorithm")
+    );
 }
 
 #[cfg(not(feature = "sha2"))]

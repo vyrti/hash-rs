@@ -251,40 +251,38 @@ pub(crate) fn collect_files_recursive_with_cache(
         let is_dir = metadata.is_dir();
 
         // Check if this is the excluded file using cached canonical path
-        if let Some(exclude_canonical) = canonical_exclude_cache {
-            if let Ok(canonical_path) = path.canonicalize() {
-                if &canonical_path == exclude_canonical {
-                    continue;
-                }
-            }
+        if let Some(exclude_canonical) = canonical_exclude_cache
+            && let Ok(canonical_path) = path.canonicalize()
+            && &canonical_path == exclude_canonical
+        {
+            continue;
         }
 
         // Check if this path should be ignored
-        if let Some(handler) = ignore_handler {
-            if let Ok(rel_path) = path.strip_prefix(root) {
-                if handler.should_ignore(rel_path, is_dir) {
-                    continue;
-                }
-            }
+        if let Some(handler) = ignore_handler
+            && let Ok(rel_path) = path.strip_prefix(root)
+            && handler.should_ignore(rel_path, is_dir)
+        {
+            continue;
         }
 
         if metadata.is_file() {
             files.push(path);
-        } else if is_dir {
-            if let Err(e) = collect_files_recursive_with_cache(
+        } else if is_dir
+            && let Err(e) = collect_files_recursive_with_cache(
                 root,
                 &path,
                 files,
                 ignore_handler,
                 _exclude_file,
                 canonical_exclude_cache,
-            ) {
-                eprintln!(
-                    "Warning: Error processing directory {}: {}",
-                    path.display(),
-                    e
-                );
-            }
+            )
+        {
+            eprintln!(
+                "Warning: Error processing directory {}: {}",
+                path.display(),
+                e
+            );
         }
     }
 

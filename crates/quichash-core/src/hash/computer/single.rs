@@ -7,11 +7,11 @@ use std::str::FromStr;
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
 
+use super::super::HashResult;
 use super::super::algorithm::Algorithm;
 use super::super::file::*;
-use super::super::hasher::{bytes_to_hex, Hasher};
+use super::super::hasher::{Hasher, bytes_to_hex};
 use super::super::registry::HashRegistry;
-use super::super::HashResult;
 use super::HashComputer;
 use crate::error::HashUtilityError;
 

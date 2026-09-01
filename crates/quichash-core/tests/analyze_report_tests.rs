@@ -1,4 +1,4 @@
-use quichash_core::analyze::{format_size, AnalyzeReport, AnalyzeStats, DuplicateGroup};
+use quichash_core::analyze::{AnalyzeReport, AnalyzeStats, DuplicateGroup, format_size};
 use std::path::PathBuf;
 
 #[test]

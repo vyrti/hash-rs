@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use quichash_core::{
-    hash_bytes, hash_reader_observed, Algorithm, HashUtilityError, HasherSet, OperationObserver,
+    Algorithm, HashUtilityError, HasherSet, OperationObserver, hash_bytes, hash_reader_observed,
 };
 
 #[cfg(feature = "blake3")]

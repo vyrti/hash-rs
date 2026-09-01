@@ -1,4 +1,4 @@
-use quichash_core::analyze::{format_size, AnalyzeEngine};
+use quichash_core::analyze::{AnalyzeEngine, format_size};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -61,12 +61,16 @@ fn test_analyze_hashdeep_format_with_commas_in_filename() {
     assert_eq!(report.stats.total_files, 2);
     assert_eq!(report.stats.duplicate_groups, 1);
     assert_eq!(report.stats.total_file_size, Some(2000));
-    assert!(report.duplicate_groups[0]
-        .paths
-        .contains(&PathBuf::from("file,one.txt")));
-    assert!(report.duplicate_groups[0]
-        .paths
-        .contains(&PathBuf::from("file,two.txt")));
+    assert!(
+        report.duplicate_groups[0]
+            .paths
+            .contains(&PathBuf::from("file,one.txt"))
+    );
+    assert!(
+        report.duplicate_groups[0]
+            .paths
+            .contains(&PathBuf::from("file,two.txt"))
+    );
 }
 
 #[test]

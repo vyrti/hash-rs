@@ -291,12 +291,11 @@ pub fn walk_directory_streaming(
                 }
 
                 // Check if this path should be ignored
-                if let Some(ref handler) = ignore_handler {
-                    if let Ok(rel_path) = path.strip_prefix(root) {
-                        if handler.should_ignore(rel_path, false) {
-                            continue;
-                        }
-                    }
+                if let Some(ref handler) = ignore_handler
+                    && let Ok(rel_path) = path.strip_prefix(root)
+                    && handler.should_ignore(rel_path, false)
+                {
+                    continue;
                 }
 
                 // Send file path to channel
@@ -385,24 +384,22 @@ pub(crate) fn collect_files_recursive(
         let is_dir = metadata.is_dir();
 
         // Check if this path should be ignored
-        if let Some(handler) = ignore_handler {
-            if let Ok(rel_path) = path.strip_prefix(root) {
-                if handler.should_ignore(rel_path, is_dir) {
-                    continue;
-                }
-            }
+        if let Some(handler) = ignore_handler
+            && let Ok(rel_path) = path.strip_prefix(root)
+            && handler.should_ignore(rel_path, is_dir)
+        {
+            continue;
         }
 
         if metadata.is_file() {
             files.push(path);
-        } else if is_dir {
-            if let Err(e) = collect_files_recursive(root, &path, files, ignore_handler) {
-                eprintln!(
-                    "Warning: Error processing directory {}: {}",
-                    path.display(),
-                    e
-                );
-            }
+        } else if is_dir && let Err(e) = collect_files_recursive(root, &path, files, ignore_handler)
+        {
+            eprintln!(
+                "Warning: Error processing directory {}: {}",
+                path.display(),
+                e
+            );
         }
     }
 

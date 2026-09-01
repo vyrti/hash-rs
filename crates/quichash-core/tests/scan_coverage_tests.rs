@@ -10,13 +10,15 @@ fn test_scan_engine_builder_options() {
         .with_format(DatabaseFormat::Hashdeep)
         .with_excluded_output("/tmp/some_out.qh");
 
-    assert!(engine
-        .scan_directory(
-            &std::path::PathBuf::from("/nonexistent"),
-            "blake3",
-            &std::path::PathBuf::from("/tmp/out")
-        )
-        .is_err());
+    assert!(
+        engine
+            .scan_directory(
+                &std::path::PathBuf::from("/nonexistent"),
+                "blake3",
+                &std::path::PathBuf::from("/tmp/out")
+            )
+            .is_err()
+    );
 }
 
 #[test]

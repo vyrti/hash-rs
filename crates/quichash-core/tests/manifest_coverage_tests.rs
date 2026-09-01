@@ -1,5 +1,5 @@
 use quichash_core::hash::{Algorithm, HashMode};
-use quichash_core::manifest::{scan_folder, verify_folder, Manifest, ScanOptions};
+use quichash_core::manifest::{Manifest, ScanOptions, scan_folder, verify_folder};
 use quichash_core::operation::{FailurePolicy, NoopObserver};
 use std::fs;
 use std::path::Path;
@@ -45,13 +45,15 @@ fn test_scan_folder_validation_errors() {
 fn test_verify_folder_nonexistent_directory() {
     let manifest = Manifest::default();
     let missing_path = Path::new("/path/that/definitely/does/not/exist");
-    assert!(verify_folder(
-        &manifest,
-        missing_path,
-        FailurePolicy::FailFast,
-        &NoopObserver
-    )
-    .is_err());
+    assert!(
+        verify_folder(
+            &manifest,
+            missing_path,
+            FailurePolicy::FailFast,
+            &NoopObserver
+        )
+        .is_err()
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use crossbeam_channel::bounded;
-use quichash_core::dedup::{walk_directory_streaming, DedupEngine};
+use quichash_core::dedup::{DedupEngine, walk_directory_streaming};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

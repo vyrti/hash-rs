@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "mmap")]
 use memmap2::Mmap;
 
-use super::file::*;
-use super::hasher::{bytes_to_hex, Hasher};
-use super::registry::HashRegistry;
 use super::HashResult;
+use super::file::*;
+use super::hasher::{Hasher, bytes_to_hex};
+use super::registry::HashRegistry;
 use crate::error::HashUtilityError;
 
 mod single;
@@ -97,7 +97,7 @@ impl HashComputer {
 
     /// Compute hash from stdin using streaming I/O
     pub fn compute_hash_stdin(&self, algorithm: &str) -> Result<HashResult, HashUtilityError> {
-        use std::io::{stdin, Read};
+        use std::io::{Read, stdin};
 
         // Get hasher for the specified algorithm
         let mut hasher = HashRegistry::get_hasher(algorithm)?;
@@ -135,7 +135,7 @@ impl HashComputer {
         &self,
         algorithms: &[String],
     ) -> Result<Vec<HashResult>, HashUtilityError> {
-        use std::io::{stdin, Read};
+        use std::io::{Read, stdin};
 
         // Get hashers for all specified algorithms
         let mut hashers: Vec<(String, Box<dyn Hasher>)> = Vec::new();

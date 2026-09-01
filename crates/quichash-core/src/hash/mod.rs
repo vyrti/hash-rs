@@ -23,12 +23,12 @@ pub use hasher::Sha1Wrapper;
 #[cfg(feature = "blake2")]
 pub use hasher::{Blake2b512Wrapper, Blake2s256Wrapper};
 pub use hasher::{Hasher, HasherSet};
-#[cfg(feature = "sha2")]
-pub use hasher::{Sha224Wrapper, Sha256Wrapper, Sha384Wrapper, Sha512Wrapper};
 #[cfg(feature = "sha3")]
 pub use hasher::{Sha3_224Wrapper, Sha3_256Wrapper, Sha3_384Wrapper, Sha3_512Wrapper};
+#[cfg(feature = "sha2")]
+pub use hasher::{Sha224Wrapper, Sha256Wrapper, Sha384Wrapper, Sha512Wrapper};
 #[cfg(feature = "xxhash")]
-pub use hasher::{Xxh128Wrapper, Xxh3Wrapper};
+pub use hasher::{Xxh3Wrapper, Xxh128Wrapper};
 pub use registry::HashRegistry;
 
 // Re-export HashUtilityError as HashError for backward compatibility

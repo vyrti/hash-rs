@@ -2,7 +2,7 @@ use quichash_core::hash::{Algorithm, DigestValue, HashMode};
 use quichash_core::manifest::{Manifest, ManifestEntry};
 
 #[cfg(all(feature = "filesystem", feature = "sha2", feature = "blake3"))]
-use quichash_core::manifest::{scan_folder, verify_folder, ScanOptions};
+use quichash_core::manifest::{ScanOptions, scan_folder, verify_folder};
 #[cfg(all(feature = "filesystem", feature = "sha2", feature = "blake3"))]
 use quichash_core::operation::{FailurePolicy, NoopObserver};
 
@@ -81,11 +81,13 @@ fn folder_scan_and_multi_digest_verification() {
         .with_parallel(true);
     let scanned = scan_folder(temporary.path(), &options, &NoopObserver).unwrap();
     assert_eq!(scanned.manifest.entries.len(), 2);
-    assert!(scanned
-        .manifest
-        .entries
-        .iter()
-        .all(|entry| entry.digests.len() == 2));
+    assert!(
+        scanned
+            .manifest
+            .entries
+            .iter()
+            .all(|entry| entry.digests.len() == 2)
+    );
     assert_eq!(scanned.folder_digests.len(), 2);
 
     let verified = verify_folder(

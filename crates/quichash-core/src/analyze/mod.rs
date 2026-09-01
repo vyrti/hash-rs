@@ -10,7 +10,7 @@ use crate::error::HashUtilityError;
 mod helpers;
 mod report;
 
-pub use report::{format_size, AnalyzeReport, AnalyzeStats, DuplicateGroup, EntryWithSize};
+pub use report::{AnalyzeReport, AnalyzeStats, DuplicateGroup, EntryWithSize, format_size};
 
 /// Engine for analyzing hash databases
 pub struct AnalyzeEngine;

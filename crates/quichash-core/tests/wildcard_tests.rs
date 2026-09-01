@@ -58,9 +58,11 @@ fn test_expand_pattern_with_matches() {
     let result = expand_pattern(&pattern).unwrap();
 
     assert_eq!(result.len(), 3);
-    assert!(result
-        .iter()
-        .all(|p| p.to_string_lossy().contains("test_wildcard_")));
+    assert!(
+        result
+            .iter()
+            .all(|p| p.to_string_lossy().contains("test_wildcard_"))
+    );
 
     // Clean up test files
     for file in &test_files {

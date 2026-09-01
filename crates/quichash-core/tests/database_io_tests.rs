@@ -11,11 +11,10 @@ fn sample_manifest() -> Manifest {
             relative_path: PathBuf::from("nested/file.txt"),
             size: 0,
             mode: quichash_core::hash::HashMode::Full,
-            digests: vec![quichash_core::hash::DigestValue::from_bytes(
-                Algorithm::Sha256,
-                vec![2; 32],
-            )
-            .unwrap()],
+            digests: vec![
+                quichash_core::hash::DigestValue::from_bytes(Algorithm::Sha256, vec![2; 32])
+                    .unwrap(),
+            ],
         }],
     }
 }
@@ -132,13 +131,15 @@ fn compress_database_rejects_hashdeep_content() {
 fn disabled_zstd_feature_reports_error_and_preserves_plain_output() {
     let temporary = tempfile::tempdir().unwrap();
     let requested = temporary.path().join("hashes");
-    assert!(DatabaseHandler::write_manifest_file(
-        &requested,
-        &sample_manifest(),
-        DatabaseFormat::Quichash,
-        true,
-    )
-    .is_err());
+    assert!(
+        DatabaseHandler::write_manifest_file(
+            &requested,
+            &sample_manifest(),
+            DatabaseFormat::Quichash,
+            true,
+        )
+        .is_err()
+    );
     assert!(temporary.path().join("hashes.qh").is_file());
     assert!(!temporary.path().join("hashes.qh.zst").exists());
 }

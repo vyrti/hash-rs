@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use super::hasher::{bytes_to_hex, Hasher};
+use super::hasher::{Hasher, bytes_to_hex};
 use super::registry::HashRegistry;
 use crate::error::HashUtilityError;
 

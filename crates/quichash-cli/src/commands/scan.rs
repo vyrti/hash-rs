@@ -91,8 +91,8 @@ pub fn handle_scan_command(
                 output.clone()
             } else {
                 // Create a temporary file for this directory's results
-                let temp_path = output.with_extension(format!("tmp{}", idx));
-                temp_path
+
+                output.with_extension(format!("tmp{}", idx))
             };
 
             let stats = engine.scan_directory(directory, algorithm, &temp_output)?;

@@ -94,7 +94,7 @@ pub fn verify_folder(
             Err(error) => {
                 return Err(HashUtilityError::VerificationFailed {
                     reason: error.to_string(),
-                })
+                });
             }
         };
         if item.file_type().is_file() {

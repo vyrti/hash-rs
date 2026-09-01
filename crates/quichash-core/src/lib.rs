@@ -36,14 +36,13 @@ pub mod wildcard;
 
 pub use error::HashUtilityError;
 pub use hash::{
-    hash_bytes, hash_file, hash_file_mode, hash_reader, hash_reader_observed, Algorithm,
-    AlgorithmInfo, DigestValue, HashComputer, HashMode, HashRegistry, HashResult, Hasher,
-    HasherSet,
+    Algorithm, AlgorithmInfo, DigestValue, HashComputer, HashMode, HashRegistry, HashResult,
+    Hasher, HasherSet, hash_bytes, hash_file, hash_file_mode, hash_reader, hash_reader_observed,
 };
 #[cfg(feature = "filesystem")]
 pub use manifest::{
-    scan_folder, verify_folder, DigestMismatch, ManifestVerifyReport, OperationIssue, ScanOptions,
-    ScanReport,
+    DigestMismatch, ManifestVerifyReport, OperationIssue, ScanOptions, ScanReport, scan_folder,
+    verify_folder,
 };
 pub use manifest::{FolderDigest, Manifest, ManifestEntry};
 pub use operation::{FailurePolicy, NoopObserver, OperationObserver, ProgressEvent, ProgressPhase};

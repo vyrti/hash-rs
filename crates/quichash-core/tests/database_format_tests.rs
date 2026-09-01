@@ -12,11 +12,10 @@ fn sample_manifest() -> Manifest {
             relative_path: PathBuf::from("nested/file.txt"),
             size: 0,
             mode: quichash_core::hash::HashMode::Full,
-            digests: vec![quichash_core::hash::DigestValue::from_bytes(
-                Algorithm::Sha256,
-                vec![2; 32],
-            )
-            .unwrap()],
+            digests: vec![
+                quichash_core::hash::DigestValue::from_bytes(Algorithm::Sha256, vec![2; 32])
+                    .unwrap(),
+            ],
         }],
     }
 }

@@ -1,8 +1,8 @@
 [package]
 name = "quichash-core"
 version = "0.1.1"
-edition = "2021"
-rust-version = "1.95"
+edition = "2024"
+rust-version = "1.97"
 description = "Reusable hashing, manifest, and verification engine for QuicHash"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vyrti/quichash"
@@ -22,14 +22,14 @@ sha3 = ["dep:sha3"]
 blake2 = ["dep:blake2"]
 blake3 = ["dep:blake3"]
 xxhash = ["dep:xxhash-rust"]
-filesystem = ["dep:crossbeam-channel", "dep:glob", "dep:ignore", "dep:jwalk"]
+filesystem = ["dep:crossbeam-channel", "dep:glob", "dep:ignore", "dep:jwalk", "parallel"]
 parallel = ["dep:rayon", "blake3?/rayon"]
 mmap = ["dep:memmap2", "blake3?/mmap"]
 zstd = ["dep:structured-zstd"]
 reporting = ["dep:chrono", "dep:serde_json"]
 
 [dependencies]
-blake2 = { version = "0.10", optional = true }
+blake2 = { version = "0.11", optional = true }
 blake3 = { version = "1.8", default-features = false, optional = true }
 chrono = { version = "0.4", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
