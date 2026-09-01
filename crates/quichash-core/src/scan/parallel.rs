@@ -50,14 +50,16 @@ pub(crate) fn scan_parallel(
     let (result_sender, result_receiver) = bounded::<(String, PathBuf, u64)>(10000);
     let writer_output = output.to_owned();
     let writer_algorithm = algorithm.to_owned();
+
+    // Create the output before traversal starts. Besides surfacing creation errors
+    // synchronously, this guarantees that the walker can canonicalize the output
+    // path before it observes directory entries. This matters on Windows, where a
+    // canonicalized walk root uses a verbatim (`\\?\`) path that does not compare
+    // equal to the equivalent non-canonical absolute path.
+    let output_file = File::create(&writer_output).map_err(|error| {
+        HashUtilityError::from_io_error(error, "creating output file", Some(writer_output.clone()))
+    })?;
     let writer_handle = thread::spawn(move || -> Result<(), HashUtilityError> {
-        let output_file = File::create(&writer_output).map_err(|error| {
-            HashUtilityError::from_io_error(
-                error,
-                "creating output file",
-                Some(writer_output.clone()),
-            )
-        })?;
         let mut writer = BufWriter::new(output_file);
         if format == DatabaseFormat::Hashdeep {
             DatabaseHandler::write_hashdeep_header(
